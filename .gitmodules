@@ -1,0 +1,10 @@
+[submodule "src/FUEL"]
+	path = src/FUEL
+	url = https://github.com/HKUST-Aerial-Robotics/FUEL.git
+[submodule "Diff-Planner"]
+	path = Diff-Planner
+	url = https://github.com/DifferentialRobotics/Diff-Planner.git
+[submodule "nlopt"]
+	path = nlopt
+	url = https://github.com/stevengj/nlopt.git
+

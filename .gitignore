@@ -1,0 +1,15 @@
+# Catkin/CMake generated files
+/build/
+/devel/
+/install/
+/logs/
+/.catkin_tools/
+/.catkin_workspace
+
+# Local runtime and editor artifacts
+/.agents/
+/.codex/
+*.bag
+*.bag.active
+*.log
+

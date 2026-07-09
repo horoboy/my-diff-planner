@@ -1,0 +1,37 @@
+{
+  "configurations": [
+    {
+      "name": "ROS Noetic",
+      "compilerPath": "/usr/bin/g++",
+      "cppStandard": "c++14",
+      "cStandard": "c11",
+      "intelliSenseMode": "linux-gcc-x64",
+      "compileCommands": "${workspaceFolder}/build/compile_commands.json",
+      "includePath": [
+        "${workspaceFolder}/src/**",
+        "${workspaceFolder}/devel/include",
+        "/opt/ros/noetic/include",
+        "/usr/include/opencv4",
+        "/usr/include/eigen3",
+        "/usr/include/pcl-1.10",
+        "/usr/include/vtk-7.1"
+      ],
+      "browse": {
+        "path": [
+          "${workspaceFolder}/src",
+          "${workspaceFolder}/devel/include",
+          "/opt/ros/noetic/include",
+          "/usr/include/opencv4",
+          "/usr/include/eigen3",
+          "/usr/include/pcl-1.10",
+          "/usr/include/vtk-7.1"
+        ],
+        "limitSymbolsToIncludedHeaders": true
+      },
+      "defines": [
+        "ROS_BUILD_SHARED_LIBS=1"
+      ]
+    }
+  ],
+  "version": 4
+}

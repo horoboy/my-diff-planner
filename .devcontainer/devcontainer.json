@@ -1,0 +1,27 @@
+{
+  "name": "diff-planner-noetic",
+  "build": {
+    "dockerfile": "Dockerfile"
+  },
+  "workspaceFolder": "/root/catkin_ws",
+  "workspaceMount": "source=${localWorkspaceFolder},target=/root/catkin_ws,type=bind",
+  "runArgs": [
+    "--net=host",
+    "--privileged",
+    "--gpus=all",
+    "--env=DISPLAY=${localEnv:DISPLAY}",
+    "--env=QT_X11_NO_MITSHM=1",
+    "--volume=/tmp/.X11-unix:/tmp/.X11-unix:rw"
+  ],
+  "postStartCommand": "bash .devcontainer/post-start.sh",
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "ms-vscode.cpptools",
+        "ms-vscode.cmake-tools",
+        "ms-azuretools.vscode-docker",
+        "openai.chatgpt"
+      ]
+    }
+  }
+}
