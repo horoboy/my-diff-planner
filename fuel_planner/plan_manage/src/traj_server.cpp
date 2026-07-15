@@ -8,6 +8,10 @@
 #include <poly_traj/polynomial_traj.h>
 #include <active_perception/perception_utils.h>
 
+#include <cmath>
+#include <cstdint>
+#include <limits>
+
 #include <plan_manage/backward.hpp>
 namespace backward {
 backward::SignalHandling sh;
@@ -25,7 +29,7 @@ quadrotor_msgs::PositionCommand cmd;
 vector<NonUniformBspline> traj_;
 double traj_duration_;
 ros::Time start_time_;
-int traj_id_;
+int64_t traj_id_;
 int pub_traj_id_;
 
 shared_ptr<PerceptionUtils> percep_utils_;
@@ -49,7 +53,7 @@ bool isLoopCorrection = false;
 double calcPathLength(const vector<Eigen::Vector3d>& path) {
   if (path.empty()) return 0;
   double len = 0.0;
-  for (int i = 0; i < path.size() - 1; ++i) {
+  for (size_t i = 0; i + 1 < path.size(); ++i) {
     len += (path[i + 1] - path[i]).norm();
   }
   return len;
@@ -215,13 +219,63 @@ void bsplineCallback(const bspline::BsplineConstPtr& msg) {
     return;
   }
 
+  if (msg->traj_id <= 0 ||
+      static_cast<uint64_t>(msg->traj_id) > std::numeric_limits<uint32_t>::max()) {
+    ROS_ERROR("[Traj server]: invalid trajectory id: %lld",
+              static_cast<long long>(msg->traj_id));
+    return;
+  }
+
+  if (msg->order < 3 || msg->pos_pts.size() < static_cast<size_t>(msg->order + 1)) {
+    ROS_ERROR("[Traj server]: invalid B-spline order or insufficient position control points.");
+    return;
+  }
+
+  const size_t expected_knot_num = msg->pos_pts.size() + msg->order + 1;
+  if (msg->knots.size() != expected_knot_num) {
+    ROS_ERROR("[Traj server]: invalid knot count: got %zu, expected %zu.", msg->knots.size(),
+              expected_knot_num);
+    return;
+  }
+
+  if (msg->yaw_pts.size() < 4 || !std::isfinite(msg->yaw_dt) || msg->yaw_dt <= 0.0) {
+    ROS_ERROR("[Traj server]: invalid yaw trajectory.");
+    return;
+  }
+
+  if (msg->start_time.isZero()) {
+    ROS_ERROR("[Traj server]: trajectory start time is zero.");
+    return;
+  }
+
+  for (size_t i = 0; i < msg->knots.size(); ++i) {
+    if (!std::isfinite(msg->knots[i]) || (i > 0 && msg->knots[i] <= msg->knots[i - 1])) {
+      ROS_ERROR("[Traj server]: knots must be finite and strictly increasing.");
+      return;
+    }
+  }
+
+  for (const auto& point : msg->pos_pts) {
+    if (!std::isfinite(point.x) || !std::isfinite(point.y) || !std::isfinite(point.z)) {
+      ROS_ERROR("[Traj server]: position control points contain non-finite values.");
+      return;
+    }
+  }
+
+  for (const double yaw_point : msg->yaw_pts) {
+    if (!std::isfinite(yaw_point)) {
+      ROS_ERROR("[Traj server]: yaw control points contain non-finite values.");
+      return;
+    }
+  }
+
   // Parse the msg
   Eigen::MatrixXd pos_pts(msg->pos_pts.size(), 3);
   Eigen::VectorXd knots(msg->knots.size());
-  for (int i = 0; i < msg->knots.size(); ++i) {
+  for (size_t i = 0; i < msg->knots.size(); ++i) {
     knots(i) = msg->knots[i];
   }
-  for (int i = 0; i < msg->pos_pts.size(); ++i) {
+  for (size_t i = 0; i < msg->pos_pts.size(); ++i) {
     pos_pts(i, 0) = msg->pos_pts[i].x;
     pos_pts(i, 1) = msg->pos_pts[i].y;
     pos_pts(i, 2) = msg->pos_pts[i].z;
@@ -230,20 +284,28 @@ void bsplineCallback(const bspline::BsplineConstPtr& msg) {
   pos_traj.setKnot(knots);
 
   Eigen::MatrixXd yaw_pts(msg->yaw_pts.size(), 1);
-  for (int i = 0; i < msg->yaw_pts.size(); ++i)
+  for (size_t i = 0; i < msg->yaw_pts.size(); ++i)
     yaw_pts(i, 0) = msg->yaw_pts[i];
   NonUniformBspline yaw_traj(yaw_pts, 3, msg->yaw_dt);
+
+  vector<NonUniformBspline> new_traj;
+  new_traj.push_back(pos_traj);
+  new_traj.push_back(new_traj[0].getDerivative());
+  new_traj.push_back(new_traj[1].getDerivative());
+  new_traj.push_back(yaw_traj);
+  new_traj.push_back(yaw_traj.getDerivative());
+  new_traj.push_back(new_traj[2].getDerivative());
+  const double new_traj_duration = new_traj[0].getTimeSum();
+
+  if (!std::isfinite(new_traj_duration) || new_traj_duration <= 0.0) {
+    ROS_ERROR("[Traj server]: invalid trajectory duration: %.6f", new_traj_duration);
+    return;
+  }
+
+  traj_ = new_traj;
+  traj_duration_ = new_traj_duration;
   start_time_ = msg->start_time;
   traj_id_ = msg->traj_id;
-
-  traj_.clear();
-  traj_.push_back(pos_traj);
-  traj_.push_back(traj_[0].getDerivative());
-  traj_.push_back(traj_[1].getDerivative());
-  traj_.push_back(yaw_traj);
-  traj_.push_back(yaw_traj.getDerivative());
-  traj_.push_back(traj_[2].getDerivative());
-  traj_duration_ = traj_[0].getTimeSum();
 
   receive_traj_ = true;
 
@@ -260,10 +322,21 @@ void cmdCallback(const ros::TimerEvent& e) {
 
   ros::Time time_now = ros::Time::now();
   double t_cur = (time_now - start_time_).toSec();
-  Eigen::Vector3d pos, vel, acc, jer;
-  double yaw, yawdot;
+  Eigen::Vector3d pos = Eigen::Vector3d::Zero();
+  Eigen::Vector3d vel = Eigen::Vector3d::Zero();
+  Eigen::Vector3d acc = Eigen::Vector3d::Zero();
+  Eigen::Vector3d jer = Eigen::Vector3d::Zero();
+  double yaw = 0.0;
+  double yawdot = 0.0;
 
-  if (t_cur < traj_duration_ && t_cur >= 0.0) {
+  if (t_cur < 0.0) {
+    if (t_cur < -1.0) {
+      ROS_WARN_THROTTLE(1.0, "[Traj server]: trajectory starts %.3f seconds in the future.", -t_cur);
+    }
+    return;
+  }
+
+  if (t_cur < traj_duration_) {
     // Current time within range of planned traj
     pos = traj_[0].evaluateDeBoorT(t_cur);
     vel = traj_[1].evaluateDeBoorT(t_cur);
@@ -277,30 +350,37 @@ void cmdCallback(const ros::TimerEvent& e) {
     pos = traj_[0].evaluateDeBoorT(traj_duration_);
     vel.setZero();
     acc.setZero();
+    jer.setZero();
     yaw = traj_[3].evaluateDeBoorT(traj_duration_)[0];
     yawdot = 0.0;
 
     // Report info of the whole flight
     double len = calcPathLength(traj_cmd_);
-    double flight_t = (end_time - start_time).toSec();
+    double flight_t = end_time.isZero() ? 0.0 : (end_time - start_time).toSec();
+    double mean_vel = flight_t > 1e-6 ? len / flight_t : 0.0;
     ROS_WARN_THROTTLE(2, "flight time: %lf, path length: %lf, mean vel: %lf, energy is: % lf ", flight_t,
-                      len, len / flight_t, energy);
-  } else {
-    cout << "[Traj server]: invalid time." << endl;
+                      len, mean_vel, energy);
   }
 
   if (isLoopCorrection) {
     pos = R_loop.transpose() * (pos - T_loop);
     vel = R_loop.transpose() * vel;
     acc = R_loop.transpose() * acc;
+    jer = R_loop.transpose() * jer;
 
     Eigen::Vector3d yaw_dir(cos(yaw), sin(yaw), 0);
     yaw_dir = R_loop.transpose() * yaw_dir;
     yaw = atan2(yaw_dir[1], yaw_dir[0]);
   }
 
+  if (!pos.allFinite() || !vel.allFinite() || !acc.allFinite() || !jer.allFinite() ||
+      !std::isfinite(yaw) || !std::isfinite(yawdot)) {
+    ROS_ERROR_THROTTLE(1.0, "[Traj server]: refusing to publish a non-finite command.");
+    return;
+  }
+
   cmd.header.stamp = time_now;
-  cmd.trajectory_id = traj_id_;
+  cmd.trajectory_id = static_cast<uint32_t>(traj_id_);
   cmd.position.x = pos(0);
   cmd.position.y = pos(1);
   cmd.position.z = pos(2);
@@ -310,6 +390,9 @@ void cmdCallback(const ros::TimerEvent& e) {
   cmd.acceleration.x = acc(0);
   cmd.acceleration.y = acc(1);
   cmd.acceleration.z = acc(2);
+  cmd.jerk.x = jer(0);
+  cmd.jerk.y = jer(1);
+  cmd.jerk.z = jer(2);
   cmd.yaw = yaw;
   cmd.yaw_dot = yawdot;
   pos_cmd_pub.publish(cmd);
@@ -352,7 +435,7 @@ void test() {
     samples.push_back(sample);
   }
   Eigen::MatrixXd points(samples.size(), 3);
-  for (int i = 0; i < samples.size(); ++i)
+  for (size_t i = 0; i < samples.size(); ++i)
     points.row(i) = samples[i].transpose();
 
   Eigen::VectorXd times(samples.size() - 1);
@@ -454,6 +537,8 @@ int main(int argc, char** argv) {
   nh.param("traj_server/pub_traj_id", pub_traj_id_, -1);
   nh.param("fsm/replan_time", replan_time_, 0.1);
   nh.param("loop_correction/isLoopCorrection", isLoopCorrection, false);
+  bool enable_init_motion = false;
+  nh.param("traj_server/enable_init_motion", enable_init_motion, false);
 
   Eigen::Vector3d init_pos;
   nh.param("traj_server/init_x", init_pos[0], 0.0);
@@ -473,7 +558,7 @@ int main(int argc, char** argv) {
   cmd.header.stamp = ros::Time::now();
   cmd.header.frame_id = "world";
   cmd.trajectory_flag = quadrotor_msgs::PositionCommand::TRAJECTORY_STATUS_READY;
-  cmd.trajectory_id = traj_id_;
+  cmd.trajectory_id = static_cast<uint32_t>(traj_id_);
   cmd.position.x = init_pos[0];
   cmd.position.y = init_pos[1];
   cmd.position.z = init_pos[2];
@@ -483,6 +568,9 @@ int main(int argc, char** argv) {
   cmd.acceleration.x = 0.0;
   cmd.acceleration.y = 0.0;
   cmd.acceleration.z = 0.0;
+  cmd.jerk.x = 0.0;
+  cmd.jerk.y = 0.0;
+  cmd.jerk.z = 0.0;
   cmd.yaw = 0.0;
   cmd.yaw_dot = 0.0;
 
@@ -490,15 +578,20 @@ int main(int argc, char** argv) {
 
   // test();
   // Initialization for exploration, move upward and downward
-  for (int i = 0; i < 100; ++i) {
-    cmd.position.z += 0.01;
-    pos_cmd_pub.publish(cmd);
-    ros::Duration(0.01).sleep();
-  }
-  for (int i = 0; i < 100; ++i) {
-    cmd.position.z -= 0.01;
-    pos_cmd_pub.publish(cmd);
-    ros::Duration(0.01).sleep();
+  if (enable_init_motion) {
+    ROS_WARN("[Traj server]: initial up-down motion enabled.");
+
+    for (int i = 0; i < 100 && ros::ok(); ++i) {
+      cmd.position.z += 0.01;
+      pos_cmd_pub.publish(cmd);
+      ros::Duration(0.01).sleep();
+    }
+
+    for (int i = 0; i < 100 && ros::ok(); ++i) {
+      cmd.position.z -= 0.01;
+      pos_cmd_pub.publish(cmd);
+      ros::Duration(0.01).sleep();
+    }
   }
   // ros::Duration(1.0).sleep();
   // for (int i = 0; i < 100; ++i)

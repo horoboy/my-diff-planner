@@ -55,6 +55,8 @@
     <param name="traj_server/init_x" value="$(arg init_x)" type="double"/>
     <param name="traj_server/init_y" value="$(arg init_y)" type="double"/>
     <param name="traj_server/init_z" value="$(arg init_z)" type="double"/>
+    <!-- Simulation-only motion used to seed the initial local map. -->
+    <param name="traj_server/enable_init_motion" value="true" type="bool"/>
 
     <param name="perception_utils/top_angle" value="0.56125" type="double"/>
     <param name="perception_utils/left_angle" value="0.69222" type="double"/>
