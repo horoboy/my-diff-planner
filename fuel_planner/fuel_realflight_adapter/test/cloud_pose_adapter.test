@@ -1,0 +1,31 @@
+<launch>
+  <param name="/use_sim_time" value="false"/>
+
+  <node pkg="fuel_realflight_adapter" name="cloud_pose_adapter_test_node"
+        type="cloud_pose_adapter_node" output="screen" required="true">
+    <remap from="~odom" to="/cloud_pose_adapter_test/odom"/>
+    <remap from="~cloud" to="/cloud_pose_adapter_test/cloud"/>
+    <remap from="~sensor_pose" to="/cloud_pose_adapter_test/sensor_pose"/>
+
+    <param name="output_frame" value="world"/>
+    <param name="expected_odom_frame" value="world"/>
+    <param name="expected_cloud_frame" value="world"/>
+    <param name="require_matching_frame_ids" value="true" type="bool"/>
+    <param name="odom_buffer_duration" value="5.0" type="double"/>
+    <param name="max_interpolation_gap" value="3.0" type="double"/>
+    <param name="max_wait_time" value="0.5" type="double"/>
+    <param name="max_cloud_age" value="0.0" type="double"/>
+
+    <param name="body_to_sensor/tx" value="0.094614" type="double"/>
+    <param name="body_to_sensor/ty" value="-0.012512" type="double"/>
+    <param name="body_to_sensor/tz" value="0.0437" type="double"/>
+    <param name="body_to_sensor/qx" value="0.0" type="double"/>
+    <param name="body_to_sensor/qy" value="0.1305261922" type="double"/>
+    <param name="body_to_sensor/qz" value="0.0" type="double"/>
+    <param name="body_to_sensor/qw" value="0.9914448614" type="double"/>
+  </node>
+
+  <test test-name="cloud_pose_adapter_integration_test"
+        pkg="fuel_realflight_adapter" type="cloud_pose_adapter_integration_test"
+        time-limit="20.0"/>
+</launch>

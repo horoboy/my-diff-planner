@@ -3,6 +3,23 @@
   <arg name="odom_topic" default="/ekf/ekf_odom"/>
   <arg name="cloud_topic" default="/laserMapping/cloud_registered"/>
   <arg name="sensor_pose_topic" default="/fuel/sensor_pose"/>
+  <arg name="planning_frame" default="world"/>
+  <arg name="expected_odom_frame" default="world"/>
+  <arg name="expected_cloud_frame" default="world"/>
+  <arg name="require_matching_frame_ids" default="true"/>
+
+  <!-- IMU/body to MID-360 transform from the current faster-lio mid360.yaml. -->
+  <arg name="sensor_tx" default="0.094614"/>
+  <arg name="sensor_ty" default="-0.012512"/>
+  <arg name="sensor_tz" default="0.0437"/>
+  <arg name="sensor_qx" default="0.0"/>
+  <arg name="sensor_qy" default="0.1305261922"/>
+  <arg name="sensor_qz" default="0.0"/>
+  <arg name="sensor_qw" default="0.9914448614"/>
+
+  <arg name="adapter_max_interpolation_gap" default="0.05"/>
+  <arg name="adapter_max_wait_time" default="0.15"/>
+  <arg name="adapter_max_cloud_age" default="0.5"/>
 
   <!-- Conservative first-flight planning envelope. -->
   <arg name="map_size_x" default="20.0"/>
@@ -27,6 +44,31 @@
 
   <!-- Real hardware must use wall-clock time. -->
   <param name="/use_sim_time" value="false"/>
+
+  <node pkg="fuel_realflight_adapter" name="cloud_pose_adapter"
+        type="cloud_pose_adapter_node" output="screen" required="true">
+    <remap from="~odom" to="$(arg odom_topic)"/>
+    <remap from="~cloud" to="$(arg cloud_topic)"/>
+    <remap from="~sensor_pose" to="$(arg sensor_pose_topic)"/>
+
+    <param name="output_frame" value="$(arg planning_frame)"/>
+    <param name="expected_odom_frame" value="$(arg expected_odom_frame)"/>
+    <param name="expected_cloud_frame" value="$(arg expected_cloud_frame)"/>
+    <param name="require_matching_frame_ids" value="$(arg require_matching_frame_ids)"/>
+    <param name="odom_buffer_duration" value="2.0" type="double"/>
+    <param name="max_interpolation_gap" value="$(arg adapter_max_interpolation_gap)"/>
+    <param name="max_wait_time" value="$(arg adapter_max_wait_time)"/>
+    <param name="max_cloud_age" value="$(arg adapter_max_cloud_age)"/>
+    <param name="max_future_offset" value="0.1" type="double"/>
+
+    <param name="body_to_sensor/tx" value="$(arg sensor_tx)"/>
+    <param name="body_to_sensor/ty" value="$(arg sensor_ty)"/>
+    <param name="body_to_sensor/tz" value="$(arg sensor_tz)"/>
+    <param name="body_to_sensor/qx" value="$(arg sensor_qx)"/>
+    <param name="body_to_sensor/qy" value="$(arg sensor_qy)"/>
+    <param name="body_to_sensor/qz" value="$(arg sensor_qz)"/>
+    <param name="body_to_sensor/qw" value="$(arg sensor_qw)"/>
+  </node>
 
   <include file="$(find exploration_manager)/launch/algorithm.xml">
     <arg name="map_size_x_" value="$(arg map_size_x)"/>
