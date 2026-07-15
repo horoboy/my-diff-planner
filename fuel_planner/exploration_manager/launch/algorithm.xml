@@ -22,6 +22,9 @@
 
   <arg name="max_vel"/>
   <arg name="max_acc"/>
+  <arg name="max_jerk" default="4.0"/>
+  <arg name="ground_height" default="-1.0"/>
+  <arg name="virtual_ceil_height" default="-10.0"/>
 
   <!-- main node -->
   <node pkg="exploration_manager" name="exploration_node" type="exploration_node" output="screen">
@@ -38,7 +41,7 @@
     <param name="sdf_map/obstacles_inflation"     value="0.199" /> 
     <param name="sdf_map/local_bound_inflate"    value="0.5"/>
     <param name="sdf_map/local_map_margin" value="50"/>
-    <param name="sdf_map/ground_height"        value="-1.0"/>
+    <param name="sdf_map/ground_height"        value="$(arg ground_height)"/>
     <param name="sdf_map/default_dist"        value="0.0"/>
     
     <param name="sdf_map/p_hit"  value="0.65"/>
@@ -48,7 +51,7 @@
     <param name="sdf_map/p_occ"  value="0.80"/>
     <param name="sdf_map/min_ray_length" value="0.5"/>
     <param name="sdf_map/max_ray_length" value="4.5"/>
-    <param name="sdf_map/virtual_ceil_height"   value="-10"/>
+    <param name="sdf_map/virtual_ceil_height"   value="$(arg virtual_ceil_height)"/>
     <param name="sdf_map/optimistic" value="false" type="bool"/>
     <param name="sdf_map/signed_dist" value="false" type="bool"/>
     <param name="sdf_map/box_min_x" value="$(arg box_min_x)" type="double"/>
@@ -133,7 +136,7 @@
     <!-- <param name="manager/max_vel" value="$(arg max_vel)" type="double"/> -->
     <param name="manager/max_vel" value="$(arg max_vel)" type="double"/>
     <param name="manager/max_acc" value="$(arg max_acc)" type="double"/>
-    <param name="manager/max_jerk" value="4" type="double"/>
+    <param name="manager/max_jerk" value="$(arg max_jerk)" type="double"/>
     <param name="manager/dynamic_environment" value="0" type="int"/>
     <param name="manager/local_segment_length" value="6.0" type="double"/>
     <param name="manager/clearance_threshold" value="0.2" type="double"/>

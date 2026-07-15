@@ -1,0 +1,86 @@
+<launch>
+  <!-- Real-flight inputs. The registered cloud must already be in the planning frame. -->
+  <arg name="odom_topic" default="/ekf/ekf_odom"/>
+  <arg name="cloud_topic" default="/laserMapping/cloud_registered"/>
+  <arg name="sensor_pose_topic" default="/fuel/sensor_pose"/>
+
+  <!-- Conservative first-flight planning envelope. -->
+  <arg name="map_size_x" default="20.0"/>
+  <arg name="map_size_y" default="20.0"/>
+  <arg name="map_size_z" default="3.0"/>
+  <arg name="box_min_x" default="-3.0"/>
+  <arg name="box_min_y" default="-3.0"/>
+  <arg name="box_min_z" default="0.3"/>
+  <arg name="box_max_x" default="3.0"/>
+  <arg name="box_max_y" default="3.0"/>
+  <arg name="box_max_z" default="1.5"/>
+  <arg name="ground_height" default="0.0"/>
+  <arg name="virtual_ceil_height" default="1.5"/>
+  <arg name="max_vel" default="0.3"/>
+  <arg name="max_acc" default="0.5"/>
+  <!-- Forwarded for configuration tracking; a downstream safety bridge must enforce jerk. -->
+  <arg name="max_jerk" default="1.0"/>
+
+  <arg name="init_x" default="0.0"/>
+  <arg name="init_y" default="0.0"/>
+  <arg name="init_z" default="0.8"/>
+
+  <!-- Real hardware must use wall-clock time. -->
+  <param name="/use_sim_time" value="false"/>
+
+  <include file="$(find exploration_manager)/launch/algorithm.xml">
+    <arg name="map_size_x_" value="$(arg map_size_x)"/>
+    <arg name="map_size_y_" value="$(arg map_size_y)"/>
+    <arg name="map_size_z_" value="$(arg map_size_z)"/>
+
+    <arg name="box_min_x" value="$(arg box_min_x)"/>
+    <arg name="box_min_y" value="$(arg box_min_y)"/>
+    <arg name="box_min_z" value="$(arg box_min_z)"/>
+    <arg name="box_max_x" value="$(arg box_max_x)"/>
+    <arg name="box_max_y" value="$(arg box_max_y)"/>
+    <arg name="box_max_z" value="$(arg box_max_z)"/>
+
+    <arg name="odometry_topic" value="$(arg odom_topic)"/>
+    <arg name="sensor_pose_topic" value="$(arg sensor_pose_topic)"/>
+    <arg name="depth_topic" value="/fuel/unused_depth"/>
+    <arg name="cloud_topic" value="$(arg cloud_topic)"/>
+
+    <!-- Camera intrinsics are unused in point-cloud mode but required by the shared include. -->
+    <arg name="cx" value="0.0"/>
+    <arg name="cy" value="0.0"/>
+    <arg name="fx" value="1.0"/>
+    <arg name="fy" value="1.0"/>
+
+    <arg name="max_vel" value="$(arg max_vel)"/>
+    <arg name="max_acc" value="$(arg max_acc)"/>
+    <arg name="max_jerk" value="$(arg max_jerk)"/>
+    <arg name="ground_height" value="$(arg ground_height)"/>
+    <arg name="virtual_ceil_height" value="$(arg virtual_ceil_height)"/>
+  </include>
+
+  <node pkg="plan_manage" name="traj_server" type="traj_server" output="screen">
+    <!-- Raw planner output remains isolated until a safety bridge is validated. -->
+    <remap from="/position_cmd" to="/fuel/position_cmd_raw"/>
+    <remap from="/odom_world" to="$(arg odom_topic)"/>
+
+    <param name="traj_server/time_forward" value="1.5" type="double"/>
+    <param name="traj_server/pub_traj_id" value="4" type="int"/>
+    <param name="traj_server/init_x" value="$(arg init_x)" type="double"/>
+    <param name="traj_server/init_y" value="$(arg init_y)" type="double"/>
+    <param name="traj_server/init_z" value="$(arg init_z)" type="double"/>
+    <param name="traj_server/enable_init_motion" value="false" type="bool"/>
+
+    <param name="perception_utils/top_angle" value="0.56125" type="double"/>
+    <param name="perception_utils/left_angle" value="0.69222" type="double"/>
+    <param name="perception_utils/right_angle" value="0.68901" type="double"/>
+    <param name="perception_utils/max_dist" value="4.5" type="double"/>
+    <param name="perception_utils/vis_dist" value="1.0" type="double"/>
+  </node>
+
+  <node pkg="waypoint_generator" name="waypoint_generator" type="waypoint_generator" output="screen">
+    <remap from="~odom" to="$(arg odom_topic)"/>
+    <remap from="~goal" to="/move_base_simple/goal"/>
+    <remap from="~traj_start_trigger" to="/traj_start_trigger"/>
+    <param name="waypoint_type" value="point"/>
+  </node>
+</launch>

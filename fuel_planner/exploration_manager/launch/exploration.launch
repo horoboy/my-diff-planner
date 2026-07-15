@@ -43,6 +43,9 @@
     <!-- maximum velocity and acceleration the drone will reach -->
     <arg name="max_vel" value="2.0" />
     <arg name="max_acc" value="2.0" />
+    <arg name="max_jerk" value="4.0" />
+    <arg name="ground_height" value="-1.0" />
+    <arg name="virtual_ceil_height" value="-10.0" />
   </include>
 
   <!-- trajectory server -->
