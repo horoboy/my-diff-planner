@@ -1,0 +1,28 @@
+<launch>
+  <arg name="odom_topic" default="/ekf/ekf_odom" />
+  <arg name="cloud_topic" default="/laserMapping/cloud_registered" />
+  <arg name="sensor_pose_topic" default="/fuel/sensor_pose" />
+  <arg name="planning_frame" default="world" />
+  <arg name="expected_odom_frame" default="world" />
+  <arg name="expected_cloud_frame" default="world" />
+  <arg name="raw_command_topic" default="/fuel/position_cmd_raw" />
+  <arg name="safe_command_topic" default="/setpoints_cmd" />
+  <arg name="safety_config"
+       default="$(find fuel_command_safety)/config/command_safety_real.yaml" />
+
+  <include file="$(find exploration_manager)/launch/exploration_real_lio.launch">
+    <arg name="odom_topic" value="$(arg odom_topic)" />
+    <arg name="cloud_topic" value="$(arg cloud_topic)" />
+    <arg name="sensor_pose_topic" value="$(arg sensor_pose_topic)" />
+    <arg name="planning_frame" value="$(arg planning_frame)" />
+    <arg name="expected_odom_frame" value="$(arg expected_odom_frame)" />
+    <arg name="expected_cloud_frame" value="$(arg expected_cloud_frame)" />
+  </include>
+
+  <include file="$(find fuel_command_safety)/launch/command_safety_real.launch">
+    <arg name="raw_command_topic" value="$(arg raw_command_topic)" />
+    <arg name="odom_topic" value="$(arg odom_topic)" />
+    <arg name="safe_command_topic" value="$(arg safe_command_topic)" />
+    <arg name="config" value="$(arg safety_config)" />
+  </include>
+</launch>
