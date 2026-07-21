@@ -1,0 +1,15 @@
+<launch>
+  <arg name="raw_command_topic" default="/fuel/position_cmd_raw" />
+  <arg name="odom_topic" default="/ekf/ekf_odom" />
+  <arg name="safe_command_topic" default="/setpoints_cmd" />
+  <arg name="config" default="$(find fuel_command_safety)/config/command_safety_real.yaml" />
+
+  <node pkg="fuel_command_safety" type="command_safety_node"
+        name="fuel_command_safety" output="screen" required="true">
+    <remap from="raw_command" to="$(arg raw_command_topic)" />
+    <remap from="odom" to="$(arg odom_topic)" />
+    <remap from="safe_command" to="$(arg safe_command_topic)" />
+    <remap from="diagnostics" to="/diagnostics" />
+    <rosparam command="load" file="$(arg config)" />
+  </node>
+</launch>

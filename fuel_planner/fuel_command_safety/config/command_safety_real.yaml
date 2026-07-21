@@ -1,0 +1,29 @@
+publish_rate: 100.0
+input_timeout: 0.20
+max_input_age: 0.15
+max_future_offset: 0.05
+odom_timeout: 0.20
+fault_latch_duration: 0.50
+allow_external_disable: false
+
+planner_finish_timeout: 1.0
+settled_position_tolerance: 0.02
+settled_velocity: 0.03
+settled_acceleration: 0.05
+
+bounds:
+  min_x: -3.0
+  min_y: -3.0
+  min_z: 0.3
+  max_x: 3.0
+  max_y: 3.0
+  max_z: 1.5
+
+limits:
+  max_velocity: 0.35
+  max_acceleration: 0.60
+  max_jerk: 1.00
+  max_yaw_rate: 0.50
+  max_position_step: 0.20
+  position_step_velocity_scale: 1.5
+  max_tracking_error: 0.75
