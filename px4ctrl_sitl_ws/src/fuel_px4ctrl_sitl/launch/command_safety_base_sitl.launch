@@ -1,0 +1,22 @@
+<launch>
+  <arg name="sitl_ns" default="/sitl" />
+  <arg name="gui" default="false" />
+  <arg name="vehicle" default="iris" />
+
+  <include file="$(find fuel_px4ctrl_sitl)/launch/full_stack_isolated.launch">
+    <arg name="sitl_ns" value="$(arg sitl_ns)" />
+    <arg name="vehicle" value="$(arg vehicle)" />
+    <arg name="gui" value="$(arg gui)" />
+    <arg name="start_px4ctrl" value="true" />
+  </include>
+
+  <node pkg="fuel_px4ctrl_sitl" type="command_fault_injector.py"
+        name="command_fault_injector" output="screen" required="true">
+    <remap from="input" to="/fuel/position_cmd_raw" />
+    <remap from="output" to="/fuel/position_cmd_test" />
+    <remap from="fault_mode" to="/sitl_test/fault_mode" />
+    <param name="stale_seconds" value="1.0" />
+    <param name="jump_distance" value="0.75" />
+  </node>
+
+</launch>

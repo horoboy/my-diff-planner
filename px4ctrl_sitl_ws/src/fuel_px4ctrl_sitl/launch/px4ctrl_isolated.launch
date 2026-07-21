@@ -1,0 +1,29 @@
+<launch>
+  <!-- Keep every FCU-facing endpoint out of the real /mavros namespace. -->
+  <arg name="sitl_ns" default="/sitl" />
+  <arg name="mavros_ns" default="$(arg sitl_ns)/mavros" />
+  <arg name="odom_topic" default="$(arg sitl_ns)/odom" />
+  <arg name="cmd_topic" default="$(arg sitl_ns)/setpoints_cmd" />
+
+  <node pkg="px4ctrl" type="px4ctrl_node" name="px4ctrl_sitl" output="screen">
+    <remap from="~odom" to="$(arg odom_topic)" />
+    <remap from="~cmd" to="$(arg cmd_topic)" />
+    <remap from="~takeoff_land" to="$(arg sitl_ns)/takeoff_land" />
+
+    <remap from="/mavros/state" to="$(arg mavros_ns)/state" />
+    <remap from="/mavros/extended_state" to="$(arg mavros_ns)/extended_state" />
+    <remap from="/mavros/imu/data" to="$(arg mavros_ns)/imu/data" />
+    <remap from="/mavros/rc/in" to="$(arg mavros_ns)/rc/in" />
+    <remap from="/mavros/battery" to="$(arg mavros_ns)/battery" />
+
+    <remap from="/mavros/setpoint_raw/attitude" to="$(arg mavros_ns)/setpoint_raw/attitude" />
+    <remap from="/mavros/set_mode" to="$(arg mavros_ns)/set_mode" />
+    <remap from="/mavros/cmd/arming" to="$(arg mavros_ns)/cmd/arming" />
+    <remap from="/mavros/cmd/command" to="$(arg mavros_ns)/cmd/command" />
+
+    <remap from="/traj_start_trigger" to="$(arg sitl_ns)/traj_start_trigger" />
+    <remap from="/debugPx4ctrl" to="$(arg sitl_ns)/debug_px4ctrl" />
+
+    <rosparam command="load" file="$(find fuel_px4ctrl_sitl)/config/ctrl_param_sitl.yaml" />
+  </node>
+</launch>

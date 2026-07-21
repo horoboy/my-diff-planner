@@ -1,0 +1,31 @@
+<launch>
+  <arg name="sitl_ns" default="/sitl" />
+  <arg name="fcu_url" default="udp://:14540@127.0.0.1:14557" />
+  <arg name="start_px4ctrl" default="false" />
+  <arg name="odom_topic" default="$(arg sitl_ns)/mavros/local_position/odom" />
+
+  <group ns="$(arg sitl_ns)">
+    <include file="$(find mavros)/launch/px4.launch">
+      <arg name="fcu_url" value="$(arg fcu_url)" />
+      <arg name="gcs_url" value="" />
+      <arg name="tgt_system" value="1" />
+      <arg name="tgt_component" value="1" />
+    </include>
+
+    <node pkg="fuel_px4ctrl_sitl" type="configure_sitl_streams.py"
+          name="configure_streams" output="screen">
+      <param name="service" value="$(arg sitl_ns)/mavros/set_message_interval" />
+      <param name="state_topic" value="$(arg sitl_ns)/mavros/state" />
+      <param name="message_rate" value="250.0" />
+      <param name="wait_timeout" value="30.0" />
+    </node>
+  </group>
+
+  <include if="$(arg start_px4ctrl)"
+           file="$(find fuel_px4ctrl_sitl)/launch/px4ctrl_isolated.launch">
+    <arg name="sitl_ns" value="$(arg sitl_ns)" />
+    <arg name="mavros_ns" value="$(arg sitl_ns)/mavros" />
+    <arg name="odom_topic" value="$(arg odom_topic)" />
+    <arg name="cmd_topic" value="$(arg sitl_ns)/setpoints_cmd" />
+  </include>
+</launch>

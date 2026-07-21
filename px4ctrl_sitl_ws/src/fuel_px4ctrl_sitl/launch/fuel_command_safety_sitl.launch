@@ -1,0 +1,19 @@
+<launch>
+  <arg name="sitl_ns" default="/sitl" />
+  <arg name="gui" default="false" />
+  <arg name="vehicle" default="iris" />
+
+  <include file="$(find fuel_px4ctrl_sitl)/launch/command_safety_base_sitl.launch">
+    <arg name="sitl_ns" value="$(arg sitl_ns)" />
+    <arg name="gui" value="$(arg gui)" />
+    <arg name="vehicle" value="$(arg vehicle)" />
+  </include>
+
+  <include file="$(find fuel_px4ctrl_sitl)/launch/command_safety_bridge_sitl.launch">
+    <arg name="sitl_ns" value="$(arg sitl_ns)" />
+  </include>
+
+  <include file="$(find fuel_px4ctrl_sitl)/launch/fuel_planner_px4_sitl.launch">
+    <arg name="sitl_ns" value="$(arg sitl_ns)" />
+  </include>
+</launch>

@@ -1,0 +1,12 @@
+<launch>
+  <arg name="sitl_ns" default="/sitl" />
+  <arg name="odom_topic" default="$(arg sitl_ns)/ground_truth/odom" />
+
+  <include file="$(find fuel_command_safety)/launch/command_safety_real.launch">
+    <arg name="raw_command_topic" value="/fuel/position_cmd_test" />
+    <arg name="odom_topic" value="$(arg odom_topic)" />
+    <arg name="safe_command_topic" value="$(arg sitl_ns)/setpoints_cmd" />
+    <arg name="config"
+         value="$(find fuel_px4ctrl_sitl)/config/command_safety_sitl.yaml" />
+  </include>
+</launch>

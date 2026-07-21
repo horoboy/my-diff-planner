@@ -1,0 +1,43 @@
+<launch>
+  <arg name="sitl_ns" default="/sitl" />
+  <arg name="vehicle" default="iris" />
+  <arg name="spawn_z" default="0.2" />
+  <arg name="gui" default="false" />
+  <arg name="start_px4ctrl" default="true" />
+
+  <include file="$(find px4)/launch/posix_sitl.launch">
+    <arg name="x" value="0" />
+    <arg name="y" value="0" />
+    <arg name="z" value="$(arg spawn_z)" />
+    <arg name="R" value="0" />
+    <arg name="P" value="0" />
+    <arg name="Y" value="0" />
+    <arg name="vehicle" value="$(arg vehicle)" />
+    <arg name="world" value="$(find mavlink_sitl_gazebo)/worlds/empty.world" />
+    <arg name="sdf" value="$(find mavlink_sitl_gazebo)/models/$(arg vehicle)/$(arg vehicle).sdf" />
+    <arg name="gui" value="$(arg gui)" />
+    <arg name="interactive" value="false" />
+    <arg name="debug" value="false" />
+    <arg name="verbose" value="false" />
+    <arg name="paused" value="false" />
+  </include>
+
+  <!-- Match the real-flight stack's wall-clock behavior and avoid MAVROS
+       timesync resets caused by mixing ROS simulated time with PX4 time. -->
+  <param name="/use_sim_time" value="false" />
+
+  <node pkg="fuel_px4ctrl_sitl" type="gazebo_ground_truth_odom.py"
+        name="gazebo_ground_truth_odom" output="screen">
+    <param name="model_name" value="$(arg vehicle)" />
+    <param name="output_topic" value="$(arg sitl_ns)/ground_truth/odom" />
+    <param name="frame_id" value="world" />
+    <param name="child_frame_id" value="base_link" />
+    <param name="publish_rate" value="200.0" />
+  </node>
+
+  <include file="$(find fuel_px4ctrl_sitl)/launch/mavros_px4ctrl_isolated.launch">
+    <arg name="sitl_ns" value="$(arg sitl_ns)" />
+    <arg name="start_px4ctrl" value="$(arg start_px4ctrl)" />
+    <arg name="odom_topic" value="$(arg sitl_ns)/ground_truth/odom" />
+  </include>
+</launch>
