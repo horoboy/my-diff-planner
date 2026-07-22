@@ -7,6 +7,9 @@
   <arg name="expected_odom_frame" default="world"/>
   <arg name="expected_cloud_frame" default="world"/>
   <arg name="require_matching_frame_ids" default="true"/>
+  <!-- Keep manual exploration goals isolated from MAVROS guided_target output. -->
+  <arg name="exploration_goal_topic" default="/fuel/exploration_goal"/>
+  <arg name="traj_start_trigger_topic" default="/traj_start_trigger"/>
 
   <!-- IMU/body to MID-360 transform from the current faster-lio mid360.yaml. -->
   <arg name="sensor_tx" default="0.094614"/>
@@ -121,8 +124,8 @@
 
   <node pkg="waypoint_generator" name="waypoint_generator" type="waypoint_generator" output="screen">
     <remap from="~odom" to="$(arg odom_topic)"/>
-    <remap from="~goal" to="/move_base_simple/goal"/>
-    <remap from="~traj_start_trigger" to="/traj_start_trigger"/>
+    <remap from="~goal" to="$(arg exploration_goal_topic)"/>
+    <remap from="~traj_start_trigger" to="$(arg traj_start_trigger_topic)"/>
     <param name="waypoint_type" value="point"/>
   </node>
 </launch>
