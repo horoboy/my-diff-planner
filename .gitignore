@@ -1,0 +1,8 @@
+build/
+devel/
+install/
+.catkin_workspace
+.catkin_tools/
+*.bag
+*.bag.active
+*.log

@@ -1,0 +1,9 @@
+<launch>
+  <!-- Read-only visualization for run_fuel_auto_explore_lio.sh.
+       This launch does not publish takeoff or exploration triggers. -->
+  <arg name="rviz_config"
+       default="$(find odom_visualization)/config/fuel_real_lio.rviz" />
+
+  <node pkg="rviz" type="rviz" name="fuel_real_lio_rviz"
+        args="-d $(arg rviz_config)" output="screen" required="false" />
+</launch>

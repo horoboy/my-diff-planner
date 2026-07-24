@@ -25,7 +25,7 @@
   <run_depend>visualization_msgs</run_depend>
   <run_depend>tf</run_depend>
   <run_depend>pose_utils</run_depend>
+  <run_depend>rviz</run_depend>
 
 </package>
-
 
