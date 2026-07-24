@@ -1,0 +1,10 @@
+<launch>
+  <!-- Start the simulator and RViz under one roslaunch parent so only one
+       process is responsible for creating the dedicated ROS master. -->
+  <arg name="start_rviz" default="true" />
+
+  <include file="$(find exploration_manager)/launch/exploration.launch" />
+
+  <include if="$(arg start_rviz)"
+           file="$(find exploration_manager)/launch/rviz.launch" />
+</launch>
