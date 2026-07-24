@@ -1,15 +1,23 @@
 # Catkin/CMake generated files
-/build/
-/devel/
-/install/
-/logs/
-/.catkin_tools/
-/.catkin_workspace
+**/build/
+**/devel/
+**/install/
+**/logs/
+**/.catkin_tools/
+**/.catkin_workspace
+/px4ctrl_sitl_ws/src/CMakeLists.txt
+/px4ctrl_sitl_ws/src/quadrotor_msgs/src/quadrotor_msgs/
 
 # Local runtime and editor artifacts
 /.agents/
 /.codex/
+**/__pycache__/
+*.pyc
 *.bag
 *.bag.active
 *.log
 
+# Local SDKs, test captures, and deployment archives
+/PX4-Autopilot-v1.15.4/
+/backups/
+/baseline/

@@ -1,7 +1,7 @@
 # FUEL and Diff-Planner integration workspace
 
-This branch keeps the FUEL, Diff-Planner, and NLopt upstream repositories
-separate while tracking the development-container and VS Code integration
+This branch keeps the FUEL, Diff-Planner, and NLopt repositories separate while
+tracking the development-container, SITL validation, and VS Code integration
 configuration at the workspace root.
 
 ## Clone
@@ -23,9 +23,10 @@ git submodule update --init --recursive
 
 ```text
 .
-├── src/FUEL/       # FUEL upstream repository
-├── Diff-Planner/   # Diff-Planner upstream repository
+├── src/FUEL/       # Customized FUEL history (fuel-integration branch)
+├── Diff-Planner/   # Customized Diff-Planner history (main branch)
 ├── nlopt/          # NLopt upstream repository
+├── px4ctrl_sitl_ws/src/fuel_px4ctrl_sitl/
 ├── .devcontainer/
 └── .vscode/
 ```
@@ -33,17 +34,12 @@ git submodule update --init --recursive
 Catkin build outputs (`build/`, `devel/`, and `install/`) are intentionally not
 tracked.
 
-## Preserved local FUEL change
+## Submodule branches
 
-The local CUDA configuration that existed when this integration branch was
-created is stored in:
+The customized FUEL history is published as `fuel-integration` in this
+repository. Diff-Planner remains on `main`. The integration branch records exact
+submodule commits, so normal builds should use `git submodule update --init
+--recursive` instead of applying the historical patches under `patches/`.
 
-```text
-patches/FUEL-enable-cuda-sm86.patch
-```
-
-Apply it after initializing submodules:
-
-```bash
-git -C src/FUEL apply ../../patches/FUEL-enable-cuda-sm86.patch
-```
+PX4-Autopilot itself and generated SITL output are intentionally excluded
+because they are large third-party/runtime artifacts.

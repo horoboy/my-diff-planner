@@ -1,10 +1,11 @@
 [submodule "src/FUEL"]
 	path = src/FUEL
-	url = https://github.com/HKUST-Aerial-Robotics/FUEL.git
+	url = https://github.com/horoboy/my-diff-planner.git
+	branch = fuel-integration
 [submodule "Diff-Planner"]
 	path = Diff-Planner
-	url = https://github.com/DifferentialRobotics/Diff-Planner.git
+	url = https://github.com/horoboy/my-diff-planner.git
+	branch = main
 [submodule "nlopt"]
 	path = nlopt
 	url = https://github.com/stevengj/nlopt.git
-
