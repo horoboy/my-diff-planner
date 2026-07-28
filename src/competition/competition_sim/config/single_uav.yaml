@@ -10,6 +10,8 @@ search_height: 1.2
 search_spacing: 0.8
 search_tree_clearance: 0.45
 search_timeout: 90.0
+search_goal_timeout: 15.0
+search_max_consecutive_skips: 8
 
 target_position: [6.0, -1.6, 0.0]
 target_type: red

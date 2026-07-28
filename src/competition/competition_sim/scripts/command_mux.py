@@ -26,6 +26,12 @@ class CommandMux:
         self.received_at = {self.DIFF: rospy.Time(0), self.FUEL: rospy.Time(0)}
         self.max_command_age = float(rospy.get_param("~max_command_age", 0.25))
         self.frame_id = rospy.get_param("/competition/frame_id", "world")
+        self.search_backend = rospy.get_param("~search_backend", "coverage")
+        if self.search_backend not in ("coverage", "fuel"):
+            raise ValueError(
+                "search_backend must be 'coverage' or 'fuel', got %r"
+                % self.search_backend
+            )
 
         odom_topic = rospy.get_param(
             "~odom_topic", "/drone_0_visual_slam/odom"
@@ -89,7 +95,12 @@ class CommandMux:
     def _state_callback(self, msg):
         with self.lock:
             self.state = msg.state
-            desired = self.FUEL if msg.state == MissionStatus.SEARCH else self.DIFF
+            desired = self.DIFF
+            if (
+                msg.state == MissionStatus.SEARCH
+                and self.search_backend == "fuel"
+            ):
+                desired = self.FUEL
             if msg.state in (
                 MissionStatus.WAIT_START,
                 MissionStatus.COMPLETE,

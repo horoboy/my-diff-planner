@@ -15,7 +15,7 @@ ROS_PORT="${ROS_PORT:-11321}"
 RESULT_FILE="${RESULT_FILE:-/tmp/competition_single_result_$(date +%Y%m%dT%H%M%S).json}"
 LOG_FILE="${LOG_FILE:-${RESULT_FILE%.json}.log}"
 MISSION_TIMEOUT="${MISSION_TIMEOUT:-180}"
-SEARCH_BACKEND="${SEARCH_BACKEND:-fuel}"
+SEARCH_BACKEND="${SEARCH_BACKEND:-coverage}"
 
 export ROS_MASTER_URI="http://127.0.0.1:${ROS_PORT}"
 export ROS_IP=127.0.0.1

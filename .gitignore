@@ -6,3 +6,5 @@ install/
 *.bag
 *.bag.active
 *.log
+__pycache__/
+*.py[cod]

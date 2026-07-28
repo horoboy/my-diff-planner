@@ -77,6 +77,14 @@ class CompetitionMissionManager:
         self.search_timeout = float(
             rospy.get_param("/competition/search_timeout", 90.0)
         )
+        self.search_goal_timeout = float(
+            rospy.get_param("/competition/search_goal_timeout", 15.0)
+        )
+        self.search_max_consecutive_skips = int(
+            rospy.get_param(
+                "/competition/search_max_consecutive_skips", 8
+            )
+        )
         self.auto_start = bool(rospy.get_param("~auto_start", False))
         self.auto_start_delay = float(rospy.get_param("~auto_start_delay", 3.0))
 
@@ -102,6 +110,7 @@ class CompetitionMissionManager:
         self.drop_requested = False
         self.release_verified_time = None
         self.search_started = None
+        self.search_consecutive_skips = 0
 
         odom_topic = rospy.get_param(
             "~odom_topic", "/drone_0_visual_slam/odom"
@@ -261,6 +270,32 @@ class CompetitionMissionManager:
             return True
         return False
 
+    def _search_goal_timed_out(self, now):
+        return (
+            self.goal_started is not None
+            and (now - self.goal_started).to_sec() > self.search_goal_timeout
+        )
+
+    def _skip_search_goal(self, reason):
+        self.search_consecutive_skips += 1
+        rospy.logwarn(
+            "[competition] Skipping search goal %d: %s (%d consecutive)",
+            self.goal_sequence,
+            reason,
+            self.search_consecutive_skips,
+        )
+        self.active_goal = None
+        self.goal_started = None
+        self.arrival_since = None
+        self.detail = "search_goal_skipped:%s" % reason
+        if (
+            self.search_consecutive_skips
+            > self.search_max_consecutive_skips
+        ):
+            self._abort("too_many_unreachable_search_goals")
+            return False
+        return True
+
     def _request_search_goal(self, now):
         if (now - self.last_search_request).to_sec() < 0.5:
             return
@@ -361,6 +396,7 @@ class CompetitionMissionManager:
                     self.goal_started = None
                     self.search_reset = True
                     self.search_started = now
+                    self.search_consecutive_skips = 0
                     if self.search_backend == "fuel":
                         self._trigger_fuel_search(now)
                     else:
@@ -396,9 +432,11 @@ class CompetitionMissionManager:
                 if self.search_backend == "coverage":
                     if self.active_goal is None:
                         self._request_search_goal(now)
-                    elif self._check_goal_timeout(now):
-                        return
+                    elif self._search_goal_timed_out(now):
+                        if self._skip_search_goal("timeout"):
+                            self._request_search_goal(now)
                     elif self._goal_arrived(now):
+                        self.search_consecutive_skips = 0
                         self.active_goal = None
                         self.goal_started = None
                         self._request_search_goal(now)

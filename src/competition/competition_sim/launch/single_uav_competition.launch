@@ -6,7 +6,7 @@
   <arg name="start_rviz" default="true" />
   <arg name="result_file" default="/tmp/competition_single_result.json" />
   <arg name="obstacles_inflation" default="0.32" />
-  <arg name="search_backend" default="fuel" />
+  <arg name="search_backend" default="coverage" />
 
   <rosparam command="load" file="$(arg config)" ns="competition" />
 
@@ -145,6 +145,7 @@
     <param name="output_topic"
            value="/competition/active_position_cmd" />
     <param name="max_command_age" value="0.25" />
+    <param name="search_backend" value="$(arg search_backend)" />
   </node>
 
   <node pkg="competition_sim" type="target_detector_sim.py"
