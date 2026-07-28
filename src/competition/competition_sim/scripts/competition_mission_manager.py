@@ -85,6 +85,18 @@ class CompetitionMissionManager:
                 "/competition/search_max_consecutive_skips", 8
             )
         )
+        self.search_pass_radius = float(
+            rospy.get_param("/competition/search_pass_radius", 0.65)
+        )
+        self.search_pass_cross_track = float(
+            rospy.get_param("/competition/search_pass_cross_track", 0.90)
+        )
+        self.search_progress_timeout = float(
+            rospy.get_param("/competition/search_progress_timeout", 4.0)
+        )
+        self.search_progress_epsilon = float(
+            rospy.get_param("/competition/search_progress_epsilon", 0.05)
+        )
         self.auto_start = bool(rospy.get_param("~auto_start", False))
         self.auto_start_delay = float(rospy.get_param("~auto_start_delay", 3.0))
 
@@ -111,6 +123,9 @@ class CompetitionMissionManager:
         self.release_verified_time = None
         self.search_started = None
         self.search_consecutive_skips = 0
+        self.search_goal_origin = None
+        self.search_best_distance = float("inf")
+        self.search_last_progress = None
 
         odom_topic = rospy.get_param(
             "~odom_topic", "/drone_0_visual_slam/odom"
@@ -276,6 +291,64 @@ class CompetitionMissionManager:
             and (now - self.goal_started).to_sec() > self.search_goal_timeout
         )
 
+    def _reset_search_goal_tracking(self, now):
+        position = self.odom.pose.pose.position
+        self.search_goal_origin = (position.x, position.y, position.z)
+        self.search_best_distance = self._distance(
+            self.odom, self.active_goal
+        )
+        self.search_last_progress = now
+
+    def _clear_search_goal_tracking(self):
+        self.search_goal_origin = None
+        self.search_best_distance = float("inf")
+        self.search_last_progress = None
+
+    def _search_point_passed(self):
+        if self.odom is None or self.active_goal is None:
+            return False
+
+        if self._distance(self.odom, self.active_goal) <= self.search_pass_radius:
+            return True
+        if self.search_goal_origin is None:
+            return False
+
+        start_x, start_y, _start_z = self.search_goal_origin
+        target = self.active_goal.pose.position
+        position = self.odom.pose.pose.position
+        dx = target.x - start_x
+        dy = target.y - start_y
+        length_squared = dx * dx + dy * dy
+        if length_squared <= 1e-9:
+            return True
+
+        progress = (
+            (position.x - start_x) * dx + (position.y - start_y) * dy
+        ) / length_squared
+        if progress < 1.0:
+            return False
+
+        cross_track = abs(
+            (position.x - start_x) * dy
+            - (position.y - start_y) * dx
+        ) / math.sqrt(length_squared)
+        return cross_track <= self.search_pass_cross_track
+
+    def _search_goal_stalled(self, now):
+        if self.odom is None or self.active_goal is None:
+            return False
+
+        distance = self._distance(self.odom, self.active_goal)
+        if distance < self.search_best_distance - self.search_progress_epsilon:
+            self.search_best_distance = distance
+            self.search_last_progress = now
+            return False
+        return (
+            self.search_last_progress is not None
+            and (now - self.search_last_progress).to_sec()
+            > self.search_progress_timeout
+        )
+
     def _skip_search_goal(self, reason):
         self.search_consecutive_skips += 1
         rospy.logwarn(
@@ -287,6 +360,7 @@ class CompetitionMissionManager:
         self.active_goal = None
         self.goal_started = None
         self.arrival_since = None
+        self._clear_search_goal_tracking()
         self.detail = "search_goal_skipped:%s" % reason
         if (
             self.search_consecutive_skips
@@ -311,6 +385,7 @@ class CompetitionMissionManager:
             if response.status == response.AVAILABLE:
                 self.search_reset = False
                 self._publish_goal(response.goal, response.detail)
+                self._reset_search_goal_tracking(now)
             elif response.status == response.EXHAUSTED:
                 self._abort("target_not_found_after_search")
             else:
@@ -397,6 +472,7 @@ class CompetitionMissionManager:
                     self.search_reset = True
                     self.search_started = now
                     self.search_consecutive_skips = 0
+                    self._clear_search_goal_tracking()
                     if self.search_backend == "fuel":
                         self._trigger_fuel_search(now)
                     else:
@@ -432,14 +508,18 @@ class CompetitionMissionManager:
                 if self.search_backend == "coverage":
                     if self.active_goal is None:
                         self._request_search_goal(now)
-                    elif self._search_goal_timed_out(now):
-                        if self._skip_search_goal("timeout"):
-                            self._request_search_goal(now)
-                    elif self._goal_arrived(now):
+                    elif self._search_point_passed():
                         self.search_consecutive_skips = 0
                         self.active_goal = None
                         self.goal_started = None
+                        self._clear_search_goal_tracking()
                         self._request_search_goal(now)
+                    elif self._search_goal_stalled(now):
+                        if self._skip_search_goal("no_progress"):
+                            self._request_search_goal(now)
+                    elif self._search_goal_timed_out(now):
+                        if self._skip_search_goal("timeout"):
+                            self._request_search_goal(now)
 
             elif self.state == MissionStatus.TARGET_CONFIRM:
                 if (now - self.state_started).to_sec() >= 0.25:

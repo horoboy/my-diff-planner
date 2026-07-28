@@ -8,12 +8,18 @@ roi_center: [5.0, 0.0]
 roi_radius: 4.0
 search_height: 1.2
 search_spacing: 0.8
+search_lane_spacing: 0.8
+search_planner_spacing: 2.0
 search_tree_clearance: 0.45
-search_timeout: 90.0
+search_timeout: 150.0
 search_goal_timeout: 15.0
 search_max_consecutive_skips: 8
+search_pass_radius: 0.65
+search_pass_cross_track: 0.90
+search_progress_timeout: 4.0
+search_progress_epsilon: 0.05
 
-target_position: [6.0, -1.6, 0.0]
+target_position: [5.0, 3.8, 0.0]
 target_type: red
 detection_range: 1.15
 detection_noise_std: 0.025
@@ -36,8 +42,8 @@ map:
   y_size: 18.0
   z_size: 3.0
   resolution: 0.1
-  tree_count: 52
-  seed: 14
+  tree_count: 70
+  seed: 30
   radius_min: 0.20
   radius_max: 0.34
   min_center_distance: 1.10

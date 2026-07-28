@@ -21,7 +21,19 @@ class CoverageSearchServer:
         self.cy = float(roi[1])
         self.radius = float(rospy.get_param("/competition/roi_radius", 3.0))
         self.altitude = float(rospy.get_param("/competition/search_height", 1.2))
-        self.spacing = float(rospy.get_param("/competition/search_spacing", 0.8))
+        legacy_spacing = float(
+            rospy.get_param("/competition/search_spacing", 0.8)
+        )
+        self.lane_spacing = float(
+            rospy.get_param(
+                "/competition/search_lane_spacing", legacy_spacing
+            )
+        )
+        self.planner_spacing = float(
+            rospy.get_param("/competition/search_planner_spacing", 2.0)
+        )
+        if self.lane_spacing <= 0.0 or self.planner_spacing <= 0.0:
+            raise ValueError("search spacing values must be positive")
         self.tree_clearance = float(
             rospy.get_param("/competition/search_tree_clearance", 0.45)
         )
@@ -29,6 +41,7 @@ class CoverageSearchServer:
 
         self.lock = threading.Lock()
         self.forest = None
+        self.coverage_path = []
         self.viewpoints = []
         self.index = 0
         self.path_pub = rospy.Publisher(
@@ -47,10 +60,14 @@ class CoverageSearchServer:
         with self.lock:
             self.forest = msg
             if not self.viewpoints:
-                self.viewpoints = self._generate_viewpoints(msg)
+                self.coverage_path, self.viewpoints = (
+                    self._generate_viewpoints(msg)
+                )
                 self._publish_path()
                 rospy.loginfo(
-                    "[competition] Coverage search prepared %d viewpoints",
+                    "[competition] Coverage search prepared %d samples and "
+                    "%d planner goals",
+                    len(self.coverage_path),
                     len(self.viewpoints),
                 )
 
@@ -60,8 +77,28 @@ class CoverageSearchServer:
                 return False
         return True
 
+    def _planner_goals_for_row(self, row):
+        if not row:
+            return []
+
+        goals = [row[0]]
+        for point in row[1:]:
+            if (
+                math.hypot(
+                    point[0] - goals[-1][0],
+                    point[1] - goals[-1][1],
+                )
+                >= self.planner_spacing
+            ):
+                goals.append(point)
+
+        if goals[-1] != row[-1]:
+            goals.append(row[-1])
+        return goals
+
     def _generate_viewpoints(self, forest):
-        rows = []
+        coverage_path = []
+        planner_goals = []
         y = self.cy - self.radius
         row_index = 0
         while y <= self.cy + self.radius + 1e-6:
@@ -74,19 +111,20 @@ class CoverageSearchServer:
             while x <= x_max + 1e-6:
                 if self._is_free(x, y, forest):
                     row.append((x, y, self.altitude))
-                x += self.spacing
+                x += self.lane_spacing
             if row_index % 2 == 1:
                 row.reverse()
-            rows.extend(row)
+            coverage_path.extend(row)
+            planner_goals.extend(self._planner_goals_for_row(row))
             row_index += 1
-            y += self.spacing
-        return rows
+            y += self.lane_spacing
+        return coverage_path, planner_goals
 
     def _publish_path(self):
         path = Path()
         path.header.stamp = rospy.Time.now()
         path.header.frame_id = self.frame_id
-        for x, y, z in self.viewpoints:
+        for x, y, z in self.coverage_path:
             pose = PoseStamped()
             pose.header = path.header
             pose.pose.position.x = x
@@ -119,6 +157,7 @@ class CoverageSearchServer:
                     )
                     if last_distance < first_distance:
                         self.viewpoints.reverse()
+                        self.coverage_path.reverse()
                         self._publish_path()
 
             if self.index >= len(self.viewpoints):
@@ -137,7 +176,7 @@ class CoverageSearchServer:
             response.goal.pose.position.z = z
             response.goal.pose.orientation.w = 1.0
             response.coverage = float(self.index) / max(1, len(self.viewpoints))
-            response.detail = "viewpoint_%d_of_%d" % (
+            response.detail = "planner_goal_%d_of_%d" % (
                 self.index,
                 len(self.viewpoints),
             )
