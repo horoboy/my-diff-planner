@@ -8,6 +8,16 @@
     <arg name="init_y"/>
     <arg name="init_z"/>
     <arg name="flight_type" default="2"/>
+    <arg name="obstacles_inflation" default="0.1"/>
+    <arg name="obstacle_clearance" default="0.1"/>
+    <arg name="obstacle_clearance_soft" default="0.5"/>
+    <arg name="trajectory_command_topic"
+         default="drone_$(arg drone_id)_planning/pos_cmd"/>
+    <arg name="simulator_command_topic"
+         default="drone_$(arg drone_id)_planning/pos_cmd"/>
+    <arg name="start_manual_take_over" default="true"/>
+    <arg name="sensing_horizon" default="5.0"/>
+    <arg name="planning_horizon" default="7.5"/>
     <arg name="point_num" default="1"/>
     <arg name="target0_x" default="0.0"/>
     <arg name="target0_y" default="0.0"/>
@@ -51,7 +61,10 @@
         <arg name="max_acc" value="6.0" />
         <arg name="max_jer" value="20.0" />
         <!--always set to 1.5 times grater than sensing horizen-->
-        <arg name="planning_horizon" value="7.5" />
+        <arg name="planning_horizon" value="$(arg planning_horizon)" />
+        <arg name="obstacles_inflation" value="$(arg obstacles_inflation)" />
+        <arg name="obstacle_clearance" value="$(arg obstacle_clearance)" />
+        <arg name="obstacle_clearance_soft" value="$(arg obstacle_clearance_soft)" />
         <arg name="use_multitopology_trajs" value="false" />
         <!-- 1: use 2D Nav Goal to select goal  -->
         <!-- 2: use global waypoints below  -->
@@ -77,7 +90,7 @@
     </include>
     <!-- trajectory server -->
     <node pkg="diff_planner" name="drone_$(arg drone_id)_traj_server" type="traj_server" output="screen">
-        <remap from="position_cmd" to="drone_$(arg drone_id)_planning/pos_cmd"/>
+        <remap from="position_cmd" to="$(arg trajectory_command_topic)"/>
         <remap from="~planning/trajectory" to="drone_$(arg drone_id)_planning/trajectory"/>
         <param name="traj_server/time_forward" value="1.0" type="double"/>
     </node>
@@ -94,10 +107,12 @@
         <arg name="init_y_" value="$(arg init_y)"/>
         <arg name="init_z_" value="$(arg init_z)"/>
         <arg name="odometry_topic" value="$(arg odom_topic)" />
+        <arg name="command_topic" value="$(arg simulator_command_topic)" />
+        <arg name="sensing_horizon" value="$(arg sensing_horizon)" />
     </include>
-    <include file="$(find manual_take_over)/launch/take_over_drone.launch">
+    <include if="$(arg start_manual_take_over)"
+             file="$(find manual_take_over)/launch/take_over_drone.launch">
         <arg name="drone_id" value="$(arg drone_id)"/>
-        <arg name="cmd_topic" value="drone_$(arg drone_id)_planning/pos_cmd"/>
+        <arg name="cmd_topic" value="$(arg simulator_command_topic)"/>
     </include>
 </launch>
-    

@@ -1,0 +1,178 @@
+<launch>
+  <arg name="config"
+       default="$(find competition_sim)/config/single_uav.yaml" />
+  <arg name="auto_start" default="false" />
+  <arg name="auto_start_delay" default="3.0" />
+  <arg name="start_rviz" default="true" />
+  <arg name="result_file" default="/tmp/competition_single_result.json" />
+  <arg name="obstacles_inflation" default="0.32" />
+  <arg name="search_backend" default="fuel" />
+
+  <rosparam command="load" file="$(arg config)" ns="competition" />
+
+  <node pkg="competition_sim" type="competition_forest_map.py"
+        name="competition_forest_map" output="screen" />
+
+  <include file="$(find diff_planner)/launch/include/run_in_sim.xml">
+    <arg name="drone_id" value="0" />
+    <arg name="init_x" value="-10.0" />
+    <arg name="init_y" value="0.0" />
+    <arg name="init_z" value="0.2" />
+    <arg name="map_size_x" value="28.0" />
+    <arg name="map_size_y" value="18.0" />
+    <arg name="map_size_z" value="3.0" />
+    <arg name="odom_topic" value="visual_slam/odom" />
+    <arg name="flight_type" value="1" />
+    <arg name="obstacles_inflation" value="$(arg obstacles_inflation)" />
+    <arg name="obstacle_clearance" value="0.12" />
+    <arg name="obstacle_clearance_soft" value="0.45" />
+    <arg name="trajectory_command_topic"
+         value="/competition/diff_position_cmd" />
+    <arg name="simulator_command_topic"
+         value="/competition/active_position_cmd" />
+    <arg name="start_manual_take_over" value="false" />
+    <arg name="sensing_horizon" value="3.0" />
+    <arg name="planning_horizon" value="4.5" />
+  </include>
+
+  <node if="$(eval arg('search_backend') == 'coverage')"
+        pkg="competition_sim" type="coverage_search_server.py"
+        name="coverage_search_server" output="screen" />
+
+  <group if="$(eval arg('search_backend') == 'fuel')">
+    <node pkg="competition_sim" name="competition_cloud_restamper"
+          type="cloud_restamper.py" output="screen">
+      <param name="input_topic"
+             value="/drone_0_pcl_render_node/cloud" />
+      <param name="output_topic"
+             value="/competition/fuel_cloud" />
+      <param name="output_frame" value="world" />
+    </node>
+
+    <node pkg="fuel_realflight_adapter" name="competition_cloud_pose_adapter"
+          type="cloud_pose_adapter_node" output="screen" required="true"
+          launch-prefix="env LD_LIBRARY_PATH=$(optenv FUEL_LD_LIBRARY_PATH /root/catkin_ws/devel/lib:/opt/ros/noetic/lib)">
+      <remap from="~odom" to="/drone_0_visual_slam/odom" />
+      <remap from="~cloud" to="/competition/fuel_cloud" />
+      <remap from="~sensor_pose"
+             to="/competition/fuel_sensor_pose" />
+      <param name="output_frame" value="world" />
+      <param name="expected_odom_frame" value="world" />
+      <param name="expected_cloud_frame" value="world" />
+      <param name="require_matching_frame_ids" value="true" />
+      <param name="odom_buffer_duration" value="2.0" />
+      <param name="max_interpolation_gap" value="0.05" />
+      <param name="max_wait_time" value="0.15" />
+      <param name="max_cloud_age" value="0.5" />
+      <param name="max_future_offset" value="0.1" />
+    </node>
+
+    <include file="$(find exploration_manager)/launch/algorithm.xml">
+      <arg name="map_size_x_" value="28.0" />
+      <arg name="map_size_y_" value="18.0" />
+      <arg name="map_size_z_" value="3.0" />
+      <arg name="box_min_x" value="1.0" />
+      <arg name="box_min_y" value="-4.0" />
+      <arg name="box_min_z" value="0.0" />
+      <arg name="box_max_x" value="9.0" />
+      <arg name="box_max_y" value="4.0" />
+      <arg name="box_max_z" value="1.8" />
+      <arg name="odometry_topic" value="/drone_0_visual_slam/odom" />
+      <arg name="sensor_pose_topic"
+           value="/competition/fuel_sensor_pose" />
+      <arg name="depth_topic" value="/drone_0_pcl_render_node/depth" />
+      <arg name="cloud_topic" value="/competition/fuel_cloud" />
+      <arg name="cx" value="321.04638671875" />
+      <arg name="cy" value="243.44969177246094" />
+      <arg name="fx" value="387.229248046875" />
+      <arg name="fy" value="387.229248046875" />
+      <arg name="max_vel" value="1.0" />
+      <arg name="max_acc" value="1.5" />
+      <arg name="max_jerk" value="4.0" />
+      <arg name="ground_height" value="0.0" />
+      <arg name="virtual_ceil_height" value="1.8" />
+      <arg name="launch_prefix"
+           value="env LD_LIBRARY_PATH=$(optenv FUEL_LD_LIBRARY_PATH /root/catkin_ws/devel/lib:/opt/ros/noetic/lib)" />
+    </include>
+
+    <param name="/exploration_node/sdf_map/obstacles_inflation"
+           value="$(arg obstacles_inflation)" />
+    <param name="/exploration_node/frontier/cluster_min"
+           value="5" />
+    <param name="/exploration_node/frontier/down_sample"
+           value="1" />
+    <param name="/exploration_node/frontier/min_visib_num"
+           value="3" />
+    <param name="/exploration_node/frontier/min_candidate_clearance"
+           value="0.08" />
+    <param name="/exploration_node/frontier/candidate_rmin"
+           value="0.8" />
+    <param name="/exploration_node/frontier/candidate_rmax"
+           value="1.6" />
+    <param name="/exploration_node/manager/clearance_threshold"
+           value="0.08" />
+    <param name="/exploration_node/optimization/dist0"
+           value="0.35" />
+    <param name="/exploration_node/search/margin"
+           value="0.08" />
+
+    <node pkg="plan_manage" name="fuel_traj_server"
+          type="traj_server" output="screen"
+          launch-prefix="env LD_LIBRARY_PATH=$(optenv FUEL_LD_LIBRARY_PATH /root/catkin_ws/devel/lib:/opt/ros/noetic/lib)">
+      <remap from="/position_cmd" to="/competition/fuel_position_cmd" />
+      <remap from="/odom_world" to="/drone_0_visual_slam/odom" />
+      <param name="traj_server/time_forward" value="1.0" type="double" />
+      <param name="traj_server/pub_traj_id" value="4" type="int" />
+      <param name="traj_server/init_x" value="5.0" type="double" />
+      <param name="traj_server/init_y" value="0.0" type="double" />
+      <param name="traj_server/init_z" value="1.2" type="double" />
+      <param name="traj_server/enable_init_motion" value="false" type="bool" />
+      <param name="perception_utils/top_angle" value="0.56125" />
+      <param name="perception_utils/left_angle" value="0.69222" />
+      <param name="perception_utils/right_angle" value="0.68901" />
+      <param name="perception_utils/max_dist" value="4.5" />
+      <param name="perception_utils/vis_dist" value="1.0" />
+    </node>
+  </group>
+
+  <node pkg="competition_sim" type="command_mux.py"
+        name="competition_command_mux" output="screen">
+    <param name="odom_topic" value="/drone_0_visual_slam/odom" />
+    <param name="diff_command_topic"
+           value="/competition/diff_position_cmd" />
+    <param name="fuel_command_topic"
+           value="/competition/fuel_position_cmd" />
+    <param name="output_topic"
+           value="/competition/active_position_cmd" />
+    <param name="max_command_age" value="0.25" />
+  </node>
+
+  <node pkg="competition_sim" type="target_detector_sim.py"
+        name="target_detector_sim" output="screen">
+    <param name="odom_topic" value="/drone_0_visual_slam/odom" />
+  </node>
+
+  <node pkg="competition_sim" type="payload_sim.py"
+        name="payload_sim" output="screen">
+    <param name="odom_topic" value="/drone_0_visual_slam/odom" />
+  </node>
+
+  <node pkg="competition_sim" type="mission_evaluator.py"
+        name="mission_evaluator" output="screen">
+    <param name="odom_topic" value="/drone_0_visual_slam/odom" />
+    <param name="output_file" value="$(arg result_file)" />
+  </node>
+
+  <node pkg="competition_sim" type="competition_mission_manager.py"
+        name="competition_mission_manager" output="screen">
+    <param name="odom_topic" value="/drone_0_visual_slam/odom" />
+    <param name="search_backend" value="$(arg search_backend)" />
+    <param name="auto_start" value="$(arg auto_start)" />
+    <param name="auto_start_delay" value="$(arg auto_start_delay)" />
+  </node>
+
+  <node if="$(arg start_rviz)" pkg="rviz" type="rviz"
+        name="competition_rviz"
+        args="-d $(find competition_sim)/config/single_uav.rviz"
+        output="screen" />
+</launch>

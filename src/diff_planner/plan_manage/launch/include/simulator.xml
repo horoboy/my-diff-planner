@@ -9,6 +9,8 @@
     <arg name="p_num"/>
     <arg name="min_dist"/>
     <arg name="odometry_topic"/>
+    <arg name="command_topic"/>
+    <arg name="sensing_horizon"/>
     <arg name="drone_id"/>
 
     <!-- <node pkg="so3_quadrotor_simulator" type="quadrotor_simulator_so3" name="drone_$(arg drone_id)_quadrotor_simulator_so3" output="screen">
@@ -45,7 +47,7 @@
         <param name="init_x" value="$(arg init_x_)"/>
         <param name="init_y" value="$(arg init_y_)"/>
         <param name="init_z" value="$(arg init_z_)"/>
-        <remap from="~command" to="drone_$(arg drone_id)_planning/pos_cmd"/>
+        <remap from="~command" to="$(arg command_topic)"/>
         <remap from="~odometry" to="drone_$(arg drone_id)_$(arg odometry_topic)"/>
     </node>
 
@@ -62,7 +64,7 @@
     </node>
     <node pkg="local_sensing_node" type="pcl_render_node" name="drone_$(arg drone_id)_pcl_render_node" output="screen">
         <rosparam command="load" file="$(find local_sensing_node)/params/camera.yaml" />
-        <param name="sensing_horizon" value="5.0" />
+        <param name="sensing_horizon" value="$(arg sensing_horizon)" />
         <param name="sensing_rate" value="30.0"/>
         <param name="estimation_rate" value="30.0"/>
         <param name="map/x_size" value="$(arg map_size_x_)"/>

@@ -1,0 +1,46 @@
+frame_id: world
+
+home: [-10.0, 0.0, 0.2]
+takeoff_height: 1.0
+land_height: 0.2
+
+roi_center: [5.0, 0.0]
+roi_radius: 4.0
+search_height: 1.2
+search_spacing: 0.8
+search_tree_clearance: 0.45
+search_timeout: 90.0
+
+target_position: [6.0, -1.6, 0.0]
+target_type: red
+detection_range: 1.15
+detection_noise_std: 0.025
+detection_false_negative_probability: 0.03
+detection_confirmations: 4
+detection_timeout: 1.0
+
+drop_height: 1.0
+drop_max_error: 0.45
+stabilize_time: 1.5
+
+arrival_tolerance: 0.35
+landing_tolerance: 0.25
+arrival_speed: 0.20
+goal_timeout: 45.0
+mission_timeout: 240.0
+
+map:
+  x_size: 28.0
+  y_size: 18.0
+  z_size: 3.0
+  resolution: 0.1
+  tree_count: 52
+  seed: 14
+  radius_min: 0.20
+  radius_max: 0.34
+  min_center_distance: 1.10
+  trunk_height: 3.0
+  start_clearance: 1.8
+  target_clearance: 0.75
+
+uav_radius: 0.28

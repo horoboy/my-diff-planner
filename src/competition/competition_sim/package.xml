@@ -1,0 +1,27 @@
+<?xml version="1.0"?>
+<package format="2">
+  <name>competition_sim</name>
+  <version>0.1.0</version>
+  <description>Single-UAV closed-loop competition simulation using Diff-Planner.</description>
+
+  <maintainer email="zhengjianlin8@outlook.com">horoboy</maintainer>
+  <license>BSD-3-Clause</license>
+
+  <buildtool_depend>catkin</buildtool_depend>
+  <depend>competition_msgs</depend>
+  <depend>geometry_msgs</depend>
+  <depend>nav_msgs</depend>
+  <depend>quadrotor_msgs</depend>
+  <depend>rospy</depend>
+  <depend>sensor_msgs</depend>
+  <depend>std_msgs</depend>
+  <depend>std_srvs</depend>
+  <depend>visualization_msgs</depend>
+  <exec_depend>diff_planner</exec_depend>
+  <exec_depend>exploration_manager</exec_depend>
+  <exec_depend>fuel_realflight_adapter</exec_depend>
+  <exec_depend>local_sensing_node</exec_depend>
+  <exec_depend>map_generator</exec_depend>
+  <exec_depend>poscmd_2_odom</exec_depend>
+  <exec_depend>plan_manage</exec_depend>
+</package>

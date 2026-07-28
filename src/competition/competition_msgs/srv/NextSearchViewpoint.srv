@@ -1,0 +1,10 @@
+geometry_msgs/Point current_position
+bool reset
+---
+uint8 AVAILABLE=0
+uint8 PENDING=1
+uint8 EXHAUSTED=2
+uint8 status
+geometry_msgs/PoseStamped goal
+float32 coverage
+string detail
