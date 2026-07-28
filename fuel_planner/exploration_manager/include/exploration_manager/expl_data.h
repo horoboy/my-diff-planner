@@ -66,6 +66,8 @@ struct ExplorationParam {
   double max_decay_;
   string tsp_dir_;  // resource dir of tsp solver
   double relax_time_;
+  double reached_viewpoint_pos_tol_;
+  double reached_viewpoint_yaw_tol_;
 };
 
 }  // namespace fast_planner

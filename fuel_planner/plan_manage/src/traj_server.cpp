@@ -571,7 +571,7 @@ int main(int argc, char** argv) {
   cmd.jerk.x = 0.0;
   cmd.jerk.y = 0.0;
   cmd.jerk.z = 0.0;
-  cmd.yaw = 0.0;
+  cmd.yaw = -1.57;
   cmd.yaw_dot = 0.0;
 
   percep_utils_.reset(new PerceptionUtils(nh));

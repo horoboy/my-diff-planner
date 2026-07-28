@@ -19,7 +19,7 @@ class FrontierFinder;
 struct ExplorationParam;
 struct ExplorationData;
 
-enum EXPL_RESULT { NO_FRONTIER, FAIL, SUCCEED };
+enum EXPL_RESULT { NO_FRONTIER, FAIL, SUCCEED, REPLAN };
 
 class FastExplorationManager {
 public:

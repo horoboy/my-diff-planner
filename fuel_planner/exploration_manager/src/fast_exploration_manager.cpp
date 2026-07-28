@@ -3,6 +3,7 @@
 #include <thread>
 #include <iostream>
 #include <fstream>
+#include <cmath>
 #include <lkh_tsp_solver/lkh_interface.h>
 #include <active_perception/graph_node.h>
 #include <active_perception/graph_search.h>
@@ -51,6 +52,8 @@ void FastExplorationManager::initialize(ros::NodeHandle& nh) {
   nh.param("exploration/max_decay", ep_->max_decay_, -1.0);
   nh.param("exploration/tsp_dir", ep_->tsp_dir_, string("null"));
   nh.param("exploration/relax_time", ep_->relax_time_, 1.0);
+  nh.param("exploration/reached_viewpoint_pos_tol", ep_->reached_viewpoint_pos_tol_, 0.05);
+  nh.param("exploration/reached_viewpoint_yaw_tol", ep_->reached_viewpoint_yaw_tol_, 0.087);
 
   nh.param("exploration/vm", ViewNode::vm_, -1.0);
   nh.param("exploration/am", ViewNode::am_, -1.0);
@@ -124,6 +127,7 @@ int FastExplorationManager::planExploreMotion(
   // Do global and local tour planning and retrieve the next viewpoint
   Vector3d next_pos;
   double next_yaw;
+  int next_frontier_id = -1;
   if (ed_->points_.size() > 1) {
     // Find the global tour passing through all viewpoints
     // Create TSP and solve by LKH
@@ -158,6 +162,7 @@ int FastExplorationManager::planExploreMotion(
       refineLocalTour(pos, vel, yaw, ed_->n_points_, n_yaws, ed_->refined_points_, refined_yaws);
       next_pos = ed_->refined_points_[0];
       next_yaw = refined_yaws[0];
+      next_frontier_id = ed_->refined_ids_[0];
 
       // Get marker for view visualization
       for (int i = 0; i < ed_->refined_points_.size(); ++i) {
@@ -181,6 +186,7 @@ int FastExplorationManager::planExploreMotion(
       // Choose the next viewpoint from global tour
       next_pos = ed_->points_[indices[0]];
       next_yaw = ed_->yaws_[indices[0]];
+      next_frontier_id = indices[0];
     }
   } else if (ed_->points_.size() == 1) {
     // Only 1 destination, no need to find global tour through TSP
@@ -212,11 +218,13 @@ int FastExplorationManager::planExploreMotion(
       }
       next_pos = ed_->n_points_[0][min_cost_id];
       next_yaw = n_yaws[0][min_cost_id];
+      next_frontier_id = 0;
       ed_->refined_points_ = { next_pos };
       ed_->refined_views_ = { next_pos + 2.0 * Vector3d(cos(next_yaw), sin(next_yaw), 0) };
     } else {
       next_pos = ed_->points_[0];
       next_yaw = ed_->yaws_[0];
+      next_frontier_id = 0;
     }
   } else
     ROS_ERROR("Empty destination.");
@@ -226,9 +234,22 @@ int FastExplorationManager::planExploreMotion(
   // Plan trajectory (position and yaw) to the next viewpoint
   t1 = ros::Time::now();
 
+  const double pos_error = (next_pos - pos).norm();
+  const double yaw_error = fabs(std::remainder(next_yaw - yaw[0], 2.0 * M_PI));
+  if (pos_error <= ep_->reached_viewpoint_pos_tol_ &&
+      yaw_error <= ep_->reached_viewpoint_yaw_tol_) {
+    if (!frontier_finder_->deferFrontier(next_frontier_id)) {
+      ROS_ERROR("Failed to defer reached frontier %d", next_frontier_id);
+      return FAIL;
+    }
+    ROS_WARN(
+        "Defer reached frontier %d (position error %.4f m, yaw error %.4f rad) and replan",
+        next_frontier_id, pos_error, yaw_error);
+    return REPLAN;
+  }
+
   // Compute time lower bound of yaw and use in trajectory generation
-  double diff = fabs(next_yaw - yaw[0]);
-  double time_lb = min(diff, 2 * M_PI - diff) / ViewNode::yd_;
+  double time_lb = yaw_error / ViewNode::yd_;
 
   // Generate trajectory of x,y,z
   planner_manager_->path_finder_->reset();
@@ -245,7 +266,10 @@ int FastExplorationManager::planExploreMotion(
   if (len < radius_close) {
     // Next viewpoint is very close, no need to search kinodynamic path, just use waypoints-based
     // optimization
-    planner_manager_->planExploreTraj(ed_->path_next_goal_, vel, acc, time_lb);
+    if (!planner_manager_->planExploreTraj(ed_->path_next_goal_, vel, acc, time_lb)) {
+      ROS_ERROR("Failed to generate close-range exploration trajectory");
+      return FAIL;
+    }
     ed_->next_goal_ = next_pos;
 
   } else if (len > radius_far) {
@@ -260,7 +284,10 @@ int FastExplorationManager::planExploreMotion(
       truncated_path.push_back(cur_pt);
     }
     ed_->next_goal_ = truncated_path.back();
-    planner_manager_->planExploreTraj(truncated_path, vel, acc, time_lb);
+    if (!planner_manager_->planExploreTraj(truncated_path, vel, acc, time_lb)) {
+      ROS_ERROR("Failed to generate long-range exploration trajectory");
+      return FAIL;
+    }
     // if (!planner_manager_->kinodynamicReplan(
     //         pos, vel, acc, ed_->next_goal_, Vector3d(0, 0, 0), time_lb))
     //   return FAIL;

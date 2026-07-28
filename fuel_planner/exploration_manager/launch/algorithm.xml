@@ -25,9 +25,12 @@
   <arg name="max_jerk" default="4.0"/>
   <arg name="ground_height" default="-1.0"/>
   <arg name="virtual_ceil_height" default="-10.0"/>
+  <arg name="launch_prefix" default=""/>
 
   <!-- main node -->
-  <node pkg="exploration_manager" name="exploration_node" type="exploration_node" output="screen">
+  <node pkg="exploration_manager" name="exploration_node"
+        type="exploration_node" output="screen"
+        launch-prefix="$(arg launch_prefix)">
     <remap from ="/odom_world" to="$(arg odometry_topic)"/>
     <remap from ="/map_ros/pose"   to = "$(arg sensor_pose_topic)"/> 
     <remap from ="/map_ros/depth" to = "$(arg depth_topic)"/>

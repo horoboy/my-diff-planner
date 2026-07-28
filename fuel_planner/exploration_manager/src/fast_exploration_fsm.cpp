@@ -108,6 +108,9 @@ void FastExplorationFSM::FSMCallback(const ros::TimerEvent& e) {
         // Still in PLAN_TRAJ state, keep replanning
         ROS_WARN("plan fail");
         fd_->static_state_ = true;
+      } else if (res == REPLAN) {
+        ROS_INFO("Reached frontier deferred, select another frontier.");
+        fd_->static_state_ = true;
       }
       break;
     }

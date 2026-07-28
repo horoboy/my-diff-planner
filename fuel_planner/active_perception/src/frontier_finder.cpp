@@ -19,6 +19,8 @@
 
 #include <Eigen/Eigenvalues>
 
+#include <iterator>
+
 namespace fast_planner {
 FrontierFinder::FrontierFinder(const EDTEnvironment::Ptr& edt, ros::NodeHandle& nh) {
   this->edt_env_ = edt;
@@ -494,6 +496,43 @@ void FrontierFinder::getDormantFrontiers(vector<vector<Vector3d>>& clusters) {
   clusters.clear();
   for (auto ft : dormant_frontiers_)
     clusters.push_back(ft.cells_);
+}
+
+bool FrontierFinder::deferFrontier(const int& id) {
+  int index = 0;
+  for (auto it = frontiers_.begin(); it != frontiers_.end(); ++it, ++index) {
+    if (it->id_ != id) continue;
+
+    for (auto other = frontiers_.begin(); other != frontiers_.end(); ++other) {
+      if (other == it) continue;
+      if (index >= static_cast<int>(other->costs_.size()) ||
+          index >= static_cast<int>(other->paths_.size())) {
+        ROS_ERROR(
+            "Cannot defer frontier %d: inconsistent cost matrix row (%zu costs, %zu paths)",
+            id, other->costs_.size(), other->paths_.size());
+        return false;
+      }
+
+      auto cost = other->costs_.begin();
+      auto path = other->paths_.begin();
+      std::advance(cost, index);
+      std::advance(path, index);
+      other->costs_.erase(cost);
+      other->paths_.erase(path);
+    }
+
+    // Keep the frontier flagged but stop selecting it until a map update changes
+    // one of its cells. searchFrontiers() will then remove it from the dormant
+    // list, reset its flags, and discover it again if it is still valid.
+    dormant_frontiers_.splice(dormant_frontiers_.end(), frontiers_, it);
+    first_new_ftr_ = frontiers_.end();
+
+    int new_id = 0;
+    for (auto& frontier : frontiers_)
+      frontier.id_ = new_id++;
+    return true;
+  }
+  return false;
 }
 
 void FrontierFinder::getFrontierBoxes(vector<pair<Eigen::Vector3d, Eigen::Vector3d>>& boxes) {

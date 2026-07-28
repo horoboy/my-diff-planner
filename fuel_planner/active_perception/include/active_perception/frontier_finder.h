@@ -74,6 +74,7 @@ public:
   void getPathForTour(const Vector3d& pos, const vector<int>& frontier_ids, vector<Vector3d>& path);
 
   void setNextFrontier(const int& id);
+  bool deferFrontier(const int& id);
   bool isFrontierCovered();
   void wrapYaw(double& yaw);
 

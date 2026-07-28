@@ -3,6 +3,8 @@
 #include <plan_env/sdf_map.h>
 #include <plan_env/raycast.h>
 
+#include <algorithm>
+#include <cmath>
 #include <thread>
 #include <pcl/point_cloud.h>
 #include <pcl/point_types.h>
@@ -263,19 +265,61 @@ bool FastPlannerManager::kinodynamicReplan(const Eigen::Vector3d& start_pt,
   return true;
 }
 
-void FastPlannerManager::planExploreTraj(const vector<Eigen::Vector3d>& tour,
+bool FastPlannerManager::planExploreTraj(const vector<Eigen::Vector3d>& tour,
     const Eigen::Vector3d& cur_vel, const Eigen::Vector3d& cur_acc, const double& time_lb) {
-  if (tour.empty()) ROS_ERROR("Empty path to traj planner");
+  if (tour.empty()) {
+    ROS_ERROR("Empty path to traj planner");
+    return false;
+  }
+
+  if (!cur_vel.allFinite() || !cur_acc.allFinite() || !std::isfinite(time_lb)) {
+    ROS_ERROR("Non-finite state or time lower bound in exploration trajectory");
+    return false;
+  }
+
+  // A* may return one point when the selected viewpoint is already reached.
+  // PolynomialTraj requires at least two segments, so preserve a valid
+  // stationary trajectory for yaw-only exploration and split a one-segment
+  // path at its midpoint.
+  constexpr double duplicate_epsilon = 1e-3;
+  vector<Eigen::Vector3d> waypoints;
+  waypoints.reserve(tour.size() + 1);
+  for (const auto& point : tour) {
+    if (!point.allFinite()) {
+      ROS_ERROR("Non-finite waypoint in exploration trajectory");
+      return false;
+    }
+    if (waypoints.empty() || (point - waypoints.back()).norm() > duplicate_epsilon)
+      waypoints.push_back(point);
+  }
+  if (waypoints.size() == 1) {
+    waypoints.push_back(waypoints.front());
+    waypoints.push_back(waypoints.front());
+    ROS_WARN_THROTTLE(1.0, "Planning a stationary exploration trajectory for a reached viewpoint");
+  } else if (waypoints.size() == 2) {
+    waypoints.insert(waypoints.begin() + 1, 0.5 * (waypoints.front() + waypoints.back()));
+  }
+  if (pp_.max_vel_ <= 1e-3) {
+    ROS_ERROR("Invalid maximum velocity for exploration trajectory: %f", pp_.max_vel_);
+    return false;
+  }
 
   // Generate traj through waypoints-based method
-  const int pt_num = tour.size();
+  const int pt_num = waypoints.size();
   Eigen::MatrixXd pos(pt_num, 3);
-  for (int i = 0; i < pt_num; ++i) pos.row(i) = tour[i];
+  for (int i = 0; i < pt_num; ++i) pos.row(i) = waypoints[i];
 
   Eigen::Vector3d zero(0, 0, 0);
   Eigen::VectorXd times(pt_num - 1);
-  for (int i = 0; i < pt_num - 1; ++i)
-    times(i) = (pos.row(i + 1) - pos.row(i)).norm() / (pp_.max_vel_ * 0.5);
+  constexpr double min_segment_time = 0.05;
+  for (int i = 0; i < pt_num - 1; ++i) {
+    const double nominal_time =
+        (pos.row(i + 1) - pos.row(i)).norm() / (pp_.max_vel_ * 0.5);
+    times(i) = std::max(min_segment_time, nominal_time);
+  }
+  const double min_total_time = std::max(0.2, std::max(0.0, time_lb));
+  if (times.sum() < min_total_time)
+    times *= min_total_time / times.sum();
 
   PolynomialTraj init_traj;
   PolynomialTraj::waypointsTraj(pos, cur_vel, zero, cur_acc, zero, times, init_traj);
@@ -286,6 +330,10 @@ void FastPlannerManager::planExploreTraj(const vector<Eigen::Vector3d>& tour,
   int seg_num = init_traj.getLength() / pp_.ctrl_pt_dist;
   seg_num = max(8, seg_num);
   double dt = duration / double(seg_num);
+  if (!std::isfinite(duration) || !std::isfinite(dt) || duration <= 0.0 || dt <= 0.0) {
+    ROS_ERROR("Invalid exploration trajectory timing: duration=%f, dt=%f", duration, dt);
+    return false;
+  }
 
   std::cout << "duration: " << duration << ", seg_num: " << seg_num << ", dt: " << dt << std::endl;
 
@@ -313,6 +361,7 @@ void FastPlannerManager::planExploreTraj(const vector<Eigen::Vector3d>& tour,
   local_data_.position_traj_.setUniformBspline(ctrl_pts, pp_.bspline_degree_, dt);
 
   updateTrajInfo();
+  return true;
 }
 
 // !SECTION
