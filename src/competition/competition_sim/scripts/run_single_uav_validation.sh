@@ -16,6 +16,16 @@ RESULT_FILE="${RESULT_FILE:-/tmp/competition_single_result_$(date +%Y%m%dT%H%M%S
 LOG_FILE="${LOG_FILE:-${RESULT_FILE%.json}.log}"
 MISSION_TIMEOUT="${MISSION_TIMEOUT:-180}"
 SEARCH_BACKEND="${SEARCH_BACKEND:-coverage}"
+CONFIG_FILE="${CONFIG_FILE:-${PACKAGE_DIR}/config/single_uav.yaml}"
+OBSTACLES_INFLATION="${OBSTACLES_INFLATION:-0.40}"
+OBSTACLE_CLEARANCE="${OBSTACLE_CLEARANCE:-0.20}"
+OBSTACLE_CLEARANCE_SOFT="${OBSTACLE_CLEARANCE_SOFT:-0.50}"
+
+if [[ ! -r "${CONFIG_FILE}" ]]; then
+  echo "ERROR: configuration file is not readable: ${CONFIG_FILE}" >&2
+  exit 2
+fi
+CONFIG_FILE="$(readlink -f "${CONFIG_FILE}")"
 
 export ROS_MASTER_URI="http://127.0.0.1:${ROS_PORT}"
 export ROS_IP=127.0.0.1
@@ -29,7 +39,11 @@ if timeout 1 rosnode list >/dev/null 2>&1; then
   exit 2
 fi
 
-mkdir -p "${ROS_HOME}" "${ROS_LOG_DIR}"
+mkdir -p \
+  "${ROS_HOME}" \
+  "${ROS_LOG_DIR}" \
+  "$(dirname "${RESULT_FILE}")" \
+  "$(dirname "${LOG_FILE}")"
 
 LAUNCH_PID=""
 cleanup() {
@@ -42,13 +56,21 @@ trap cleanup EXIT INT TERM
 
 echo "Starting single-UAV competition simulation"
 echo "  ROS master: ${ROS_MASTER_URI}"
+echo "  config:     ${CONFIG_FILE}"
+echo "  inflation:  ${OBSTACLES_INFLATION}"
+echo "  hard clear: ${OBSTACLE_CLEARANCE}"
+echo "  soft clear: ${OBSTACLE_CLEARANCE_SOFT}"
 echo "  result:     ${RESULT_FILE}"
 echo "  log:        ${LOG_FILE}"
 
 roslaunch competition_sim single_uav_competition.launch \
+  config:="${CONFIG_FILE}" \
   auto_start:=true \
   start_rviz:=false \
   search_backend:="${SEARCH_BACKEND}" \
+  obstacles_inflation:="${OBSTACLES_INFLATION}" \
+  obstacle_clearance:="${OBSTACLE_CLEARANCE}" \
+  obstacle_clearance_soft:="${OBSTACLE_CLEARANCE_SOFT}" \
   result_file:="${RESULT_FILE}" >"${LOG_FILE}" 2>&1 &
 LAUNCH_PID=$!
 

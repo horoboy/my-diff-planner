@@ -97,6 +97,18 @@ class CompetitionMissionManager:
         self.search_progress_epsilon = float(
             rospy.get_param("/competition/search_progress_epsilon", 0.05)
         )
+        self.transit_progress_timeout = float(
+            rospy.get_param("/competition/transit_progress_timeout", 4.0)
+        )
+        self.transit_progress_epsilon = float(
+            rospy.get_param("/competition/transit_progress_epsilon", 0.05)
+        )
+        self.transit_retry_delay = float(
+            rospy.get_param("/competition/transit_retry_delay", 0.5)
+        )
+        self.transit_max_retries = int(
+            rospy.get_param("/competition/transit_max_retries", 2)
+        )
         self.auto_start = bool(rospy.get_param("~auto_start", False))
         self.auto_start_delay = float(rospy.get_param("~auto_start_delay", 3.0))
 
@@ -126,6 +138,10 @@ class CompetitionMissionManager:
         self.search_goal_origin = None
         self.search_best_distance = float("inf")
         self.search_last_progress = None
+        self.transit_retry_count = 0
+        self.transit_best_distance = float("inf")
+        self.transit_last_progress = None
+        self.transit_retry_pending = None
 
         odom_topic = rospy.get_param(
             "~odom_topic", "/drone_0_visual_slam/odom"
@@ -290,6 +306,71 @@ class CompetitionMissionManager:
             self.goal_started is not None
             and (now - self.goal_started).to_sec() > self.search_goal_timeout
         )
+
+    def _reset_transit_tracking(self, now):
+        self.transit_best_distance = self._distance(
+            self.odom, self.active_goal
+        )
+        self.transit_last_progress = now
+        self.transit_retry_pending = None
+
+    def _transit_stalled(self, now):
+        distance = self._distance(self.odom, self.active_goal)
+        if distance < (
+            self.transit_best_distance - self.transit_progress_epsilon
+        ):
+            self.transit_best_distance = distance
+            self.transit_last_progress = now
+            return False
+        return (
+            self.transit_last_progress is not None
+            and (now - self.transit_last_progress).to_sec()
+            > self.transit_progress_timeout
+        )
+
+    def _schedule_transit_retry(self, now):
+        if self.transit_retry_count >= self.transit_max_retries:
+            self._abort(
+                "transit_no_progress_after_%d_retries"
+                % self.transit_retry_count
+            )
+            return
+
+        self.transit_retry_count += 1
+        self.transit_retry_pending = now
+        self.active_goal = None
+        self.goal_started = None
+        self.arrival_since = None
+        self.detail = "transit_recovery_wait_%d" % self.transit_retry_count
+        rospy.logwarn(
+            "[competition] Transit recovery %d/%d scheduled after "
+            "%.1f s without progress",
+            self.transit_retry_count,
+            self.transit_max_retries,
+            self.transit_progress_timeout,
+        )
+
+    def _continue_transit_retry(self, now):
+        if self.transit_retry_pending is None:
+            return False
+        if (
+            now - self.transit_retry_pending
+        ).to_sec() < self.transit_retry_delay:
+            return True
+
+        self._publish_goal(
+            self._make_goal(
+                self.roi[0], self.roi[1], self.search_height
+            ),
+            "transit_retry_%d" % self.transit_retry_count,
+        )
+        self._reset_transit_tracking(now)
+        rospy.logwarn(
+            "[competition] Transit recovery %d/%d goal republished",
+            self.transit_retry_count,
+            self.transit_max_retries,
+        )
+        return True
 
     def _reset_search_goal_tracking(self, now):
         position = self.odom.pose.pose.position
@@ -461,8 +542,12 @@ class CompetitionMissionManager:
                         ),
                         "transit_to_roi",
                     )
+                    self.transit_retry_count = 0
+                    self._reset_transit_tracking(now)
 
             elif self.state == MissionStatus.TRANSIT_TO_ROI:
+                if self._continue_transit_retry(now):
+                    return
                 if self._check_goal_timeout(now):
                     return
                 if self._goal_arrived(now):
@@ -477,6 +562,8 @@ class CompetitionMissionManager:
                         self._trigger_fuel_search(now)
                     else:
                         self._request_search_goal(now)
+                elif self._transit_stalled(now):
+                    self._schedule_transit_retry(now)
 
             elif self.state == MissionStatus.SEARCH:
                 if (

@@ -35,6 +35,12 @@ class MissionEvaluator:
         self.forest = None
         self.drop_state = None
         self.min_clearance = float("inf")
+        self.min_clearance_position = None
+        self.min_clearance_tree_id = -1
+        self.min_clearance_tree_center = None
+        self.min_clearance_tree_radius = None
+        self.min_clearance_state = "WAIT_START"
+        self.current_state = "WAIT_START"
         self.active_collisions = set()
         self.collision_count = 0
         self.start_time = None
@@ -84,7 +90,21 @@ class MissionEvaluator:
                     position.x - center.x, position.y - center.y
                 )
                 clearance = horizontal - radius - self.uav_radius
-                self.min_clearance = min(self.min_clearance, clearance)
+                if clearance < self.min_clearance:
+                    self.min_clearance = clearance
+                    self.min_clearance_position = [
+                        position.x,
+                        position.y,
+                        position.z,
+                    ]
+                    self.min_clearance_tree_id = index
+                    self.min_clearance_tree_center = [
+                        center.x,
+                        center.y,
+                        center.z,
+                    ]
+                    self.min_clearance_tree_radius = radius
+                    self.min_clearance_state = self.current_state
                 if clearance < 0.0 and 0.0 <= position.z <= self.forest.height:
                     current_collisions.add(index)
 
@@ -101,6 +121,7 @@ class MissionEvaluator:
         with self.lock:
             if self.finished:
                 return
+            self.current_state = msg.state_name
             if msg.state != MissionStatus.WAIT_START and self.start_time is None:
                 self.start_time = msg.header.stamp
             if msg.state in (MissionStatus.COMPLETE, MissionStatus.ABORT):
@@ -158,6 +179,11 @@ class MissionEvaluator:
             "drop_error": drop_error,
             "drop_max_error": self.drop_max_error,
             "min_obstacle_clearance": min_clearance,
+            "min_clearance_position": self.min_clearance_position,
+            "min_clearance_tree_id": self.min_clearance_tree_id,
+            "min_clearance_tree_center": self.min_clearance_tree_center,
+            "min_clearance_tree_radius": self.min_clearance_tree_radius,
+            "min_clearance_state": self.min_clearance_state,
             "collision_count": self.collision_count,
             "final_state": self.final_status.state_name,
             "goal_sequence": self.final_status.goal_sequence,
@@ -180,6 +206,15 @@ class MissionEvaluator:
             min_clearance,
             self.collision_count,
             self.output_file,
+        )
+        rospy.logwarn(
+            "[competition] MIN_CLEARANCE position=%s tree_id=%d "
+            "tree_center=%s tree_radius=%s state=%s",
+            self.min_clearance_position,
+            self.min_clearance_tree_id,
+            self.min_clearance_tree_center,
+            self.min_clearance_tree_radius,
+            self.min_clearance_state,
         )
 
 

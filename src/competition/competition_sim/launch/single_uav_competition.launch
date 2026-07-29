@@ -5,7 +5,9 @@
   <arg name="auto_start_delay" default="3.0" />
   <arg name="start_rviz" default="true" />
   <arg name="result_file" default="/tmp/competition_single_result.json" />
-  <arg name="obstacles_inflation" default="0.32" />
+  <arg name="obstacles_inflation" default="0.40" />
+  <arg name="obstacle_clearance" default="0.20" />
+  <arg name="obstacle_clearance_soft" default="0.50" />
   <arg name="search_backend" default="coverage" />
 
   <rosparam command="load" file="$(arg config)" ns="competition" />
@@ -24,8 +26,9 @@
     <arg name="odom_topic" value="visual_slam/odom" />
     <arg name="flight_type" value="1" />
     <arg name="obstacles_inflation" value="$(arg obstacles_inflation)" />
-    <arg name="obstacle_clearance" value="0.12" />
-    <arg name="obstacle_clearance_soft" value="0.45" />
+    <arg name="obstacle_clearance" value="$(arg obstacle_clearance)" />
+    <arg name="obstacle_clearance_soft"
+         value="$(arg obstacle_clearance_soft)" />
     <arg name="trajectory_command_topic"
          value="/competition/diff_position_cmd" />
     <arg name="simulator_command_topic"
