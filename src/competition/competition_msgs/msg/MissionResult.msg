@@ -6,4 +6,7 @@ float64 duration
 float64 drop_error
 float64 min_obstacle_clearance
 uint32 collision_count
-
+float64 min_altitude
+float64 max_altitude
+uint32 altitude_violation_count
+uint32 planner_recovery_count

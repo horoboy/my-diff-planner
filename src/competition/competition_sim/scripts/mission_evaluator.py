@@ -7,6 +7,7 @@ import threading
 
 import rospy
 from nav_msgs.msg import Odometry
+from std_msgs.msg import UInt32
 
 from competition_msgs.msg import (
     DropState,
@@ -26,6 +27,17 @@ class MissionEvaluator:
         self.drop_max_error = float(
             rospy.get_param("/competition/drop_max_error", 0.45)
         )
+        self.min_flight_altitude = float(
+            rospy.get_param("/competition/min_flight_altitude", 0.0)
+        )
+        self.max_flight_altitude = float(
+            rospy.get_param("/competition/max_flight_altitude", 2.6)
+        )
+        self.altitude_violation_tolerance = float(
+            rospy.get_param(
+                "/competition/altitude_violation_tolerance", 0.02
+            )
+        )
         self.output_file = rospy.get_param(
             "~output_file", "/tmp/competition_single_result.json"
         )
@@ -43,6 +55,13 @@ class MissionEvaluator:
         self.current_state = "WAIT_START"
         self.active_collisions = set()
         self.collision_count = 0
+        self.min_altitude = float("inf")
+        self.max_altitude = -float("inf")
+        self.altitude_violation_active = False
+        self.altitude_violation_count = 0
+        self.planner_recovery_count = 0
+        self.last_position = None
+        self.last_speed = None
         self.start_time = None
         self.final_status = None
         self.finished = False
@@ -68,6 +87,12 @@ class MissionEvaluator:
             self._status_callback,
             queue_size=10,
         )
+        self.recovery_sub = rospy.Subscriber(
+            "/competition/planner_watchdog/recovery_count",
+            UInt32,
+            self._recovery_callback,
+            queue_size=1,
+        )
 
     def _forest_callback(self, msg):
         with self.lock:
@@ -77,11 +102,45 @@ class MissionEvaluator:
         with self.lock:
             self.drop_state = msg
 
+    def _recovery_callback(self, msg):
+        with self.lock:
+            self.planner_recovery_count = msg.data
+
     def _odom_callback(self, msg):
         with self.lock:
-            if self.forest is None or self.finished:
+            if self.finished:
                 return
             position = msg.pose.pose.position
+            velocity = msg.twist.twist.linear
+            self.last_position = [position.x, position.y, position.z]
+            self.last_speed = math.sqrt(
+                velocity.x * velocity.x
+                + velocity.y * velocity.y
+                + velocity.z * velocity.z
+            )
+            self.min_altitude = min(self.min_altitude, position.z)
+            self.max_altitude = max(self.max_altitude, position.z)
+            altitude_violation = (
+                position.z
+                < self.min_flight_altitude - self.altitude_violation_tolerance
+                or position.z
+                > self.max_flight_altitude
+                + self.altitude_violation_tolerance
+            )
+            if altitude_violation and not self.altitude_violation_active:
+                self.altitude_violation_count += 1
+                rospy.logerr(
+                    "[competition] Altitude boundary violation at z=%.3f; "
+                    "allowed=[%.3f, %.3f] tolerance=%.3f",
+                    position.z,
+                    self.min_flight_altitude,
+                    self.max_flight_altitude,
+                    self.altitude_violation_tolerance,
+                )
+            self.altitude_violation_active = altitude_violation
+
+            if self.forest is None:
+                return
             current_collisions = set()
             for index, (center, radius) in enumerate(
                 zip(self.forest.centers, self.forest.radii)
@@ -143,6 +202,7 @@ class MissionEvaluator:
             and released
             and drop_error <= self.drop_max_error
             and self.collision_count == 0
+            and self.altitude_violation_count == 0
         )
         reasons = []
         if not completed:
@@ -153,11 +213,19 @@ class MissionEvaluator:
             reasons.append("drop_error_exceeded")
         if self.collision_count:
             reasons.append("collision_detected")
+        if self.altitude_violation_count:
+            reasons.append("altitude_boundary_violation")
         reason = "success" if success else ",".join(reasons)
 
         duration = self.final_status.elapsed
         min_clearance = (
             self.min_clearance if math.isfinite(self.min_clearance) else 999.0
+        )
+        min_altitude = (
+            self.min_altitude if math.isfinite(self.min_altitude) else 999.0
+        )
+        max_altitude = (
+            self.max_altitude if math.isfinite(self.max_altitude) else -999.0
         )
         result = MissionResult()
         result.header.stamp = rospy.Time.now()
@@ -169,6 +237,10 @@ class MissionEvaluator:
         result.drop_error = drop_error
         result.min_obstacle_clearance = min_clearance
         result.collision_count = self.collision_count
+        result.min_altitude = min_altitude
+        result.max_altitude = max_altitude
+        result.altitude_violation_count = self.altitude_violation_count
+        result.planner_recovery_count = self.planner_recovery_count
         self.result_pub.publish(result)
 
         output = {
@@ -185,6 +257,15 @@ class MissionEvaluator:
             "min_clearance_tree_radius": self.min_clearance_tree_radius,
             "min_clearance_state": self.min_clearance_state,
             "collision_count": self.collision_count,
+            "min_altitude": min_altitude,
+            "max_altitude": max_altitude,
+            "min_flight_altitude": self.min_flight_altitude,
+            "max_flight_altitude": self.max_flight_altitude,
+            "altitude_violation_tolerance": self.altitude_violation_tolerance,
+            "altitude_violation_count": self.altitude_violation_count,
+            "planner_recovery_count": self.planner_recovery_count,
+            "final_position": self.last_position,
+            "final_speed": self.last_speed,
             "final_state": self.final_status.state_name,
             "goal_sequence": self.final_status.goal_sequence,
         }
@@ -198,13 +279,17 @@ class MissionEvaluator:
         self.finished = True
         rospy.logwarn(
             "[competition] MISSION_RESULT success=%s reason=%s duration=%.2f "
-            "drop_error=%.3f min_clearance=%.3f collisions=%d output=%s",
+            "drop_error=%.3f min_clearance=%.3f collisions=%d "
+            "altitude=[%.3f, %.3f] altitude_violations=%d output=%s",
             success,
             reason,
             duration,
             drop_error,
             min_clearance,
             self.collision_count,
+            min_altitude,
+            max_altitude,
+            self.altitude_violation_count,
             self.output_file,
         )
         rospy.logwarn(

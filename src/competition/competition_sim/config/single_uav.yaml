@@ -11,9 +11,12 @@ search_spacing: 0.8
 search_lane_spacing: 0.8
 search_planner_spacing: 2.0
 search_path_direction: bottom_to_top
-search_tree_clearance: 0.55
-search_segment_clearance: 0.55
+search_tree_clearance: 0.60
+search_segment_clearance: 0.60
+mission_route_clearance: 0.65
+mission_route_fallback_clearance: 0.60
 search_route_resolution: 0.20
+search_route_corridor_margin: 2.0
 search_timeout: 150.0
 search_goal_timeout: 15.0
 search_max_consecutive_skips: 8
@@ -25,6 +28,13 @@ transit_progress_timeout: 4.0
 transit_progress_epsilon: 0.05
 transit_retry_delay: 0.5
 transit_max_retries: 2
+motion_progress_timeout: 4.0
+motion_progress_epsilon: 0.05
+motion_retry_delay: 0.75
+motion_max_retries: 3
+motion_waypoint_delay: 0.15
+motion_waypoint_tolerance: 0.15
+motion_waypoint_settle_time: 0.15
 
 target_position: [5.0, 3.8, 0.0]
 target_type: red
@@ -60,3 +70,6 @@ map:
 
 uav_radius: 0.28
 required_obstacle_clearance: 0.20
+min_flight_altitude: 0.0
+max_flight_altitude: 2.6
+altitude_violation_tolerance: 0.02

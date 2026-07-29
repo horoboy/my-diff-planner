@@ -25,4 +25,5 @@
   <exec_depend>poscmd_2_odom</exec_depend>
   <exec_depend>plan_manage</exec_depend>
   <exec_depend>python3-yaml</exec_depend>
+  <exec_depend>rosnode</exec_depend>
 </package>

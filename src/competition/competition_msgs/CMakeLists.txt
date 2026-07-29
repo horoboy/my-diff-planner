@@ -19,6 +19,7 @@ add_message_files(
 add_service_files(
   FILES
   NextSearchViewpoint.srv
+  PlanSafeRoute.srv
 )
 
 generate_messages(
@@ -30,4 +31,3 @@ generate_messages(
 catkin_package(
   CATKIN_DEPENDS geometry_msgs message_runtime std_msgs
 )
-

@@ -10,7 +10,12 @@ from std_msgs.msg import Empty
 from std_srvs.srv import Trigger
 
 from competition_msgs.msg import DropState, MissionStatus, TargetDetection
-from competition_msgs.srv import NextSearchViewpoint, NextSearchViewpointRequest
+from competition_msgs.srv import (
+    NextSearchViewpoint,
+    NextSearchViewpointRequest,
+    PlanSafeRoute,
+    PlanSafeRouteRequest,
+)
 
 
 STATE_NAMES = {
@@ -97,17 +102,44 @@ class CompetitionMissionManager:
         self.search_progress_epsilon = float(
             rospy.get_param("/competition/search_progress_epsilon", 0.05)
         )
-        self.transit_progress_timeout = float(
-            rospy.get_param("/competition/transit_progress_timeout", 4.0)
+        self.motion_progress_timeout = float(
+            rospy.get_param(
+                "/competition/motion_progress_timeout",
+                rospy.get_param(
+                    "/competition/transit_progress_timeout", 4.0
+                ),
+            )
         )
-        self.transit_progress_epsilon = float(
-            rospy.get_param("/competition/transit_progress_epsilon", 0.05)
+        self.motion_progress_epsilon = float(
+            rospy.get_param(
+                "/competition/motion_progress_epsilon",
+                rospy.get_param(
+                    "/competition/transit_progress_epsilon", 0.05
+                ),
+            )
         )
-        self.transit_retry_delay = float(
-            rospy.get_param("/competition/transit_retry_delay", 0.5)
+        self.motion_retry_delay = float(
+            rospy.get_param(
+                "/competition/motion_retry_delay",
+                rospy.get_param("/competition/transit_retry_delay", 0.5),
+            )
         )
-        self.transit_max_retries = int(
-            rospy.get_param("/competition/transit_max_retries", 2)
+        self.motion_max_retries = int(
+            rospy.get_param(
+                "/competition/motion_max_retries",
+                rospy.get_param("/competition/transit_max_retries", 2),
+            )
+        )
+        self.motion_waypoint_delay = float(
+            rospy.get_param("/competition/motion_waypoint_delay", 0.75)
+        )
+        self.motion_waypoint_tolerance = float(
+            rospy.get_param("/competition/motion_waypoint_tolerance", 0.15)
+        )
+        self.motion_waypoint_settle_time = float(
+            rospy.get_param(
+                "/competition/motion_waypoint_settle_time", 0.15
+            )
         )
         self.auto_start = bool(rospy.get_param("~auto_start", False))
         self.auto_start_delay = float(rospy.get_param("~auto_start_delay", 3.0))
@@ -138,10 +170,15 @@ class CompetitionMissionManager:
         self.search_goal_origin = None
         self.search_best_distance = float("inf")
         self.search_last_progress = None
-        self.transit_retry_count = 0
-        self.transit_best_distance = float("inf")
-        self.transit_last_progress = None
-        self.transit_retry_pending = None
+        self.motion_route = []
+        self.motion_route_index = 0
+        self.motion_route_detail = ""
+        self.motion_retry_count = 0
+        self.motion_best_distance = float("inf")
+        self.motion_last_progress = None
+        self.motion_retry_pending = None
+        self.motion_next_pending = None
+        self.last_route_request = rospy.Time(0)
 
         odom_topic = rospy.get_param(
             "~odom_topic", "/drone_0_visual_slam/odom"
@@ -176,6 +213,9 @@ class CompetitionMissionManager:
         )
         self.search_client = rospy.ServiceProxy(
             "/competition/next_search_viewpoint", NextSearchViewpoint
+        )
+        self.route_client = rospy.ServiceProxy(
+            "/competition/plan_safe_route", PlanSafeRoute
         )
         self.drop_client = rospy.ServiceProxy(
             "/competition/release_payload", Trigger
@@ -277,21 +317,60 @@ class CompetitionMissionManager:
         )
         self._publish_status(None)
 
-    def _goal_arrived(self, now, landing=False):
+    def _goal_arrived(
+        self,
+        now,
+        landing=False,
+        tolerance=None,
+        settle_time=0.35,
+        position_only_timeout=None,
+    ):
         if self.odom is None or self.active_goal is None:
             return False
-        tolerance = self.landing_tolerance if landing else self.arrival_tolerance
-        arrived = (
+        if tolerance is None:
+            tolerance = (
+                self.landing_tolerance
+                if landing
+                else self.arrival_tolerance
+            )
+        position_arrived = (
             self._distance(self.odom, self.active_goal) <= tolerance
-            and self._speed(self.odom) <= self.arrival_speed
         )
-        if not arrived:
+        if not position_arrived:
             self.arrival_since = None
             return False
         if self.arrival_since is None:
             self.arrival_since = now
             return False
-        return (now - self.arrival_since).to_sec() >= 0.35
+        dwell = (now - self.arrival_since).to_sec()
+        if (
+            self._speed(self.odom) <= self.arrival_speed
+            and dwell >= settle_time
+        ):
+            return True
+        return (
+            position_only_timeout is not None
+            and dwell >= position_only_timeout
+        )
+
+    def _motion_goal_arrived(self, now):
+        intermediate = (
+            self.motion_route
+            and self.motion_route_index + 1 < len(self.motion_route)
+        )
+        tolerance = (
+            self.motion_waypoint_tolerance
+            if intermediate
+            else self.arrival_tolerance
+        )
+        settle_time = (
+            self.motion_waypoint_settle_time
+            if intermediate
+            else 0.35
+        )
+        return self._goal_arrived(
+            now, tolerance=tolerance, settle_time=settle_time
+        )
 
     def _check_goal_timeout(self, now):
         if self.goal_started is None:
@@ -307,69 +386,147 @@ class CompetitionMissionManager:
             and (now - self.goal_started).to_sec() > self.search_goal_timeout
         )
 
-    def _reset_transit_tracking(self, now):
-        self.transit_best_distance = self._distance(
+    def _reset_motion_tracking(self, now):
+        self.motion_best_distance = self._distance(
             self.odom, self.active_goal
         )
-        self.transit_last_progress = now
-        self.transit_retry_pending = None
+        self.motion_last_progress = now
+        self.motion_retry_pending = None
 
-    def _transit_stalled(self, now):
+    def _motion_stalled(self, now):
         distance = self._distance(self.odom, self.active_goal)
         if distance < (
-            self.transit_best_distance - self.transit_progress_epsilon
+            self.motion_best_distance - self.motion_progress_epsilon
         ):
-            self.transit_best_distance = distance
-            self.transit_last_progress = now
+            self.motion_best_distance = distance
+            self.motion_last_progress = now
             return False
         return (
-            self.transit_last_progress is not None
-            and (now - self.transit_last_progress).to_sec()
-            > self.transit_progress_timeout
+            self.motion_last_progress is not None
+            and (now - self.motion_last_progress).to_sec()
+            > self.motion_progress_timeout
         )
 
-    def _schedule_transit_retry(self, now):
-        if self.transit_retry_count >= self.transit_max_retries:
+    def _schedule_motion_retry(self, now):
+        if self.motion_retry_count >= self.motion_max_retries:
             self._abort(
-                "transit_no_progress_after_%d_retries"
-                % self.transit_retry_count
+                "%s_no_progress_after_%d_retries"
+                % (STATE_NAMES[self.state].lower(), self.motion_retry_count)
             )
             return
 
-        self.transit_retry_count += 1
-        self.transit_retry_pending = now
+        self.motion_retry_count += 1
+        self.motion_retry_pending = now
         self.active_goal = None
         self.goal_started = None
         self.arrival_since = None
-        self.detail = "transit_recovery_wait_%d" % self.transit_retry_count
+        self.detail = "motion_recovery_wait_%d" % self.motion_retry_count
         rospy.logwarn(
-            "[competition] Transit recovery %d/%d scheduled after "
+            "[competition] Motion recovery in %s %d/%d scheduled after "
             "%.1f s without progress",
-            self.transit_retry_count,
-            self.transit_max_retries,
-            self.transit_progress_timeout,
+            STATE_NAMES[self.state],
+            self.motion_retry_count,
+            self.motion_max_retries,
+            self.motion_progress_timeout,
         )
 
-    def _continue_transit_retry(self, now):
-        if self.transit_retry_pending is None:
+    def _continue_motion_retry(self, now):
+        if self.motion_retry_pending is None:
             return False
         if (
-            now - self.transit_retry_pending
-        ).to_sec() < self.transit_retry_delay:
+            now - self.motion_retry_pending
+        ).to_sec() < self.motion_retry_delay:
             return True
 
-        self._publish_goal(
-            self._make_goal(
-                self.roi[0], self.roi[1], self.search_height
-            ),
-            "transit_retry_%d" % self.transit_retry_count,
+        self._publish_motion_route_goal(
+            now, "retry_%d" % self.motion_retry_count
         )
-        self._reset_transit_tracking(now)
         rospy.logwarn(
-            "[competition] Transit recovery %d/%d goal republished",
-            self.transit_retry_count,
-            self.transit_max_retries,
+            "[competition] Motion recovery in %s %d/%d goal republished",
+            STATE_NAMES[self.state],
+            self.motion_retry_count,
+            self.motion_max_retries,
         )
+        return True
+
+    def _start_motion_route(self, goal, detail, now):
+        if (now - self.last_route_request).to_sec() < 0.5:
+            return False
+        self.last_route_request = now
+
+        route = [goal]
+        if self.search_backend == "coverage":
+            try:
+                request = PlanSafeRouteRequest()
+                position = self.odom.pose.pose.position
+                request.start = Point(
+                    x=position.x, y=position.y, z=position.z
+                )
+                request.goal = Point(
+                    x=goal.pose.position.x,
+                    y=goal.pose.position.y,
+                    z=goal.pose.position.z,
+                )
+                response = self.route_client(request)
+                if not response.success or not response.waypoints:
+                    self.detail = "safe_route_waiting:%s" % response.detail
+                    return False
+                route = list(response.waypoints)
+            except (rospy.ServiceException, rospy.ROSException) as error:
+                self.detail = "safe_route_waiting:%s" % error
+                return False
+
+        self.motion_route = route
+        self.motion_route_index = 0
+        self.motion_route_detail = detail
+        self.motion_retry_count = 0
+        self.motion_next_pending = None
+        self._publish_motion_route_goal(now)
+        return True
+
+    def _publish_motion_route_goal(self, now, suffix=None):
+        goal = self.motion_route[self.motion_route_index]
+        count = len(self.motion_route)
+        if count == 1:
+            detail = self.motion_route_detail
+        else:
+            detail = "%s_route_%d_of_%d" % (
+                self.motion_route_detail,
+                self.motion_route_index + 1,
+                count,
+            )
+        if suffix:
+            detail = "%s_%s" % (detail, suffix)
+        goal.header.stamp = now
+        self._publish_goal(goal, detail)
+        self._reset_motion_tracking(now)
+
+    def _advance_motion_route(self, now):
+        if self.motion_route_index + 1 >= len(self.motion_route):
+            self.motion_route = []
+            self.motion_route_index = 0
+            self.motion_route_detail = ""
+            self.motion_retry_pending = None
+            self.motion_next_pending = None
+            return True
+        self.motion_route_index += 1
+        self.motion_retry_count = 0
+        self.motion_next_pending = now
+        self.active_goal = None
+        self.goal_started = None
+        self.arrival_since = None
+        self.detail = "motion_waypoint_transition_wait"
+        return False
+
+    def _continue_motion_route(self, now):
+        if self.motion_next_pending is None:
+            return False
+        if (
+            now - self.motion_next_pending
+        ).to_sec() < self.motion_waypoint_delay:
+            return True
+        self.motion_next_pending = None
+        self._publish_motion_route_goal(now)
         return True
 
     def _reset_search_goal_tracking(self, now):
@@ -492,6 +649,9 @@ class CompetitionMissionManager:
     def _abort(self, reason):
         if self.state in (MissionStatus.COMPLETE, MissionStatus.ABORT):
             return
+        self.motion_route = []
+        self.motion_retry_pending = None
+        self.motion_next_pending = None
         self._set_state(MissionStatus.ABORT, reason)
         self.stop_pub.publish(Empty())
 
@@ -532,25 +692,31 @@ class CompetitionMissionManager:
             elif self.state == MissionStatus.TAKEOFF:
                 if self._check_goal_timeout(now):
                     return
-                if self._goal_arrived(now):
-                    self._set_state(
-                        MissionStatus.TRANSIT_TO_ROI, "takeoff_complete"
-                    )
-                    self._publish_goal(
+                if self._goal_arrived(
+                    now, position_only_timeout=1.0
+                ):
+                    if not self._start_motion_route(
                         self._make_goal(
                             self.roi[0], self.roi[1], self.search_height
                         ),
                         "transit_to_roi",
+                        now,
+                    ):
+                        return
+                    self._set_state(
+                        MissionStatus.TRANSIT_TO_ROI, "takeoff_complete"
                     )
-                    self.transit_retry_count = 0
-                    self._reset_transit_tracking(now)
 
             elif self.state == MissionStatus.TRANSIT_TO_ROI:
-                if self._continue_transit_retry(now):
+                if self._continue_motion_route(now):
+                    return
+                if self._continue_motion_retry(now):
                     return
                 if self._check_goal_timeout(now):
                     return
-                if self._goal_arrived(now):
+                if self._motion_goal_arrived(now):
+                    if not self._advance_motion_route(now):
+                        return
                     self._set_state(MissionStatus.SEARCH, "roi_reached")
                     self.active_goal = None
                     self.goal_started = None
@@ -562,8 +728,8 @@ class CompetitionMissionManager:
                         self._trigger_fuel_search(now)
                     else:
                         self._request_search_goal(now)
-                elif self._transit_stalled(now):
-                    self._schedule_transit_retry(now)
+                elif self._motion_stalled(now):
+                    self._schedule_motion_retry(now)
 
             elif self.state == MissionStatus.SEARCH:
                 if (
@@ -610,22 +776,32 @@ class CompetitionMissionManager:
 
             elif self.state == MissionStatus.TARGET_CONFIRM:
                 if (now - self.state_started).to_sec() >= 0.25:
-                    self._set_state(MissionStatus.APPROACH, "approaching_target")
-                    self._publish_goal(
+                    if not self._start_motion_route(
                         self._make_goal(
                             self.confirmed_target[0],
                             self.confirmed_target[1],
                             self.drop_height,
                         ),
                         "target_overhead",
-                    )
+                        now,
+                    ):
+                        return
+                    self._set_state(MissionStatus.APPROACH, "approaching_target")
 
             elif self.state == MissionStatus.APPROACH:
+                if self._continue_motion_route(now):
+                    return
+                if self._continue_motion_retry(now):
+                    return
                 if self._check_goal_timeout(now):
                     return
-                if self._goal_arrived(now):
+                if self._motion_goal_arrived(now):
+                    if not self._advance_motion_route(now):
+                        return
                     self._set_state(MissionStatus.STABILIZE, "over_target")
                     self.stable_since = now
+                elif self._motion_stalled(now):
+                    self._schedule_motion_retry(now)
 
             elif self.state == MissionStatus.STABILIZE:
                 if not self._goal_arrived(now):
@@ -654,20 +830,30 @@ class CompetitionMissionManager:
                     if self.release_verified_time is None:
                         self.release_verified_time = now
                     elif (now - self.release_verified_time).to_sec() >= 0.5:
-                        self._set_state(MissionStatus.RETURN, "release_verified")
-                        self._publish_goal(
+                        if not self._start_motion_route(
                             self._make_goal(
                                 self.home[0], self.home[1], self.takeoff_height
                             ),
                             "return_home",
+                            now,
+                        ):
+                            return
+                        self._set_state(
+                            MissionStatus.RETURN, "release_verified"
                         )
                 elif (now - self.state_started).to_sec() > 3.0:
                     self._abort("release_not_verified")
 
             elif self.state == MissionStatus.RETURN:
+                if self._continue_motion_route(now):
+                    return
+                if self._continue_motion_retry(now):
+                    return
                 if self._check_goal_timeout(now):
                     return
-                if self._goal_arrived(now):
+                if self._motion_goal_arrived(now):
+                    if not self._advance_motion_route(now):
+                        return
                     self._set_state(MissionStatus.LAND, "home_reached")
                     self._publish_goal(
                         self._make_goal(
@@ -675,6 +861,8 @@ class CompetitionMissionManager:
                         ),
                         "land",
                     )
+                elif self._motion_stalled(now):
+                    self._schedule_motion_retry(now)
 
             elif self.state == MissionStatus.LAND:
                 if self._check_goal_timeout(now):

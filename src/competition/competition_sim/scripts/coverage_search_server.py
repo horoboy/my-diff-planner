@@ -12,6 +12,8 @@ from competition_msgs.msg import Forest
 from competition_msgs.srv import (
     NextSearchViewpoint,
     NextSearchViewpointResponse,
+    PlanSafeRoute,
+    PlanSafeRouteResponse,
 )
 
 
@@ -56,8 +58,31 @@ class CoverageSearchServer:
                 self.tree_clearance,
             )
         )
+        self.mission_route_clearance = float(
+            rospy.get_param(
+                "/competition/mission_route_clearance",
+                self.segment_clearance,
+            )
+        )
+        self.mission_route_fallback_clearance = float(
+            rospy.get_param(
+                "/competition/mission_route_fallback_clearance",
+                self.mission_route_clearance,
+            )
+        )
         self.route_resolution = float(
             rospy.get_param("/competition/search_route_resolution", 0.20)
+        )
+        self.route_corridor_margin = float(
+            rospy.get_param(
+                "/competition/search_route_corridor_margin", 2.0
+            )
+        )
+        self.map_x_size = float(
+            rospy.get_param("/competition/map/x_size", 28.0)
+        )
+        self.map_y_size = float(
+            rospy.get_param("/competition/map/y_size", 18.0)
         )
         self.uav_radius = float(
             rospy.get_param("/competition/uav_radius", 0.28)
@@ -82,14 +107,43 @@ class CoverageSearchServer:
                 "required_obstacle_clearance %.3f"
                 % (self.segment_clearance, minimum_tree_clearance)
             )
+        if self.mission_route_clearance < minimum_tree_clearance:
+            raise ValueError(
+                "mission_route_clearance %.3f is below uav_radius + "
+                "required_obstacle_clearance %.3f"
+                % (self.mission_route_clearance, minimum_tree_clearance)
+            )
+        if self.mission_route_fallback_clearance < minimum_tree_clearance:
+            raise ValueError(
+                "mission_route_fallback_clearance %.3f is below "
+                "uav_radius + required_obstacle_clearance %.3f"
+                % (
+                    self.mission_route_fallback_clearance,
+                    minimum_tree_clearance,
+                )
+            )
+        if (
+            self.mission_route_fallback_clearance
+            > self.mission_route_clearance
+        ):
+            raise ValueError(
+                "mission_route_fallback_clearance must not exceed "
+                "mission_route_clearance"
+            )
         if self.route_resolution <= 0.0:
             raise ValueError("search_route_resolution must be positive")
+        if self.route_corridor_margin <= 0.0:
+            raise ValueError("search_route_corridor_margin must be positive")
         self.frame_id = rospy.get_param("/competition/frame_id", "world")
 
         self.lock = threading.Lock()
         self.forest = None
         self.coverage_path = []
+        self.base_viewpoints = []
         self.viewpoints = []
+        self.generation_error = None
+        self.generation_attempted = False
+        self.generation_in_progress = False
         self.index = 0
         self.path_pub = rospy.Publisher(
             "/competition/search_path", Path, queue_size=1, latch=True
@@ -102,22 +156,52 @@ class CoverageSearchServer:
             NextSearchViewpoint,
             self._handle_request,
         )
+        self.route_service = rospy.Service(
+            "/competition/plan_safe_route",
+            PlanSafeRoute,
+            self._handle_route_request,
+        )
 
     def _forest_callback(self, msg):
         with self.lock:
             self.forest = msg
-            if not self.viewpoints:
-                self.coverage_path, self.viewpoints = (
-                    self._generate_viewpoints(msg)
-                )
-                self._publish_path()
-                rospy.loginfo(
-                    "[competition] Coverage search prepared %d samples and "
-                    "%d safe planner goals, direction=%s",
-                    len(self.coverage_path),
-                    len(self.viewpoints),
-                    self.path_direction,
-                )
+            if (
+                self.base_viewpoints
+                or self.generation_attempted
+                or self.generation_in_progress
+            ):
+                return
+            self.generation_attempted = True
+            self.generation_in_progress = True
+
+        try:
+            coverage_path, base_viewpoints = self._generate_viewpoints(msg)
+            if not base_viewpoints:
+                raise RuntimeError("no_safe_search_viewpoints")
+        except RuntimeError as error:
+            with self.lock:
+                self.generation_error = str(error)
+                self.generation_in_progress = False
+            rospy.logerr(
+                "[competition] Coverage route unavailable: %s",
+                self.generation_error,
+            )
+            return
+
+        with self.lock:
+            self.coverage_path = coverage_path
+            self.base_viewpoints = base_viewpoints
+            self.viewpoints = list(self.base_viewpoints)
+            self.generation_error = None
+            self.generation_in_progress = False
+            self._publish_path()
+        rospy.loginfo(
+            "[competition] Coverage search prepared %d samples and "
+            "%d safe planner goals, direction=%s",
+            len(coverage_path),
+            len(base_viewpoints),
+            self.path_direction,
+        )
 
     def _is_free(self, x, y, forest):
         return self._is_free_with_clearance(
@@ -147,12 +231,15 @@ class CoverageSearchServer:
         closest_y = start[1] + projection * dy
         return math.hypot(point[0] - closest_x, point[1] - closest_y)
 
-    def _segment_is_free(self, start, end, forest):
+    def _segment_is_free(self, start, end, forest, clearance=None):
+        required_clearance = (
+            self.segment_clearance if clearance is None else clearance
+        )
         for center, radius in zip(forest.centers, forest.radii):
             distance = self._point_segment_distance(
                 (center.x, center.y), start, end
             )
-            if distance <= radius + self.segment_clearance:
+            if distance <= radius + required_clearance:
                 return False
         return True
 
@@ -175,28 +262,53 @@ class CoverageSearchServer:
             goals.append(row[-1])
         return goals
 
-    def _route_grid(self, forest):
-        x_min = self.cx - self.radius
-        y_min = self.cy - self.radius
-        count = int(math.ceil(2.0 * self.radius / self.route_resolution))
+    def _route_grid(
+        self,
+        forest,
+        start=None,
+        goal=None,
+        altitude=None,
+        clearance=None,
+    ):
+        if start is None or goal is None:
+            x_min = self.cx - self.radius - self.route_corridor_margin
+            x_max = self.cx + self.radius + self.route_corridor_margin
+            y_min = self.cy - self.radius - self.route_corridor_margin
+            y_max = self.cy + self.radius + self.route_corridor_margin
+            x_min = max(-self.map_x_size / 2.0, x_min)
+            x_max = min(self.map_x_size / 2.0, x_max)
+            y_min = max(-self.map_y_size / 2.0, y_min)
+            y_max = min(self.map_y_size / 2.0, y_max)
+        else:
+            x_min = min(start[0], goal[0]) - self.route_corridor_margin
+            x_max = max(start[0], goal[0]) + self.route_corridor_margin
+            y_min = min(start[1], goal[1]) - self.route_corridor_margin
+            y_max = max(start[1], goal[1]) + self.route_corridor_margin
+            x_min = max(-self.map_x_size / 2.0, x_min)
+            x_max = min(self.map_x_size / 2.0, x_max)
+            y_min = max(-self.map_y_size / 2.0, y_min)
+            y_max = min(self.map_y_size / 2.0, y_max)
+
+        route_altitude = self.altitude if altitude is None else altitude
+        required_clearance = (
+            self.segment_clearance if clearance is None else clearance
+        )
+        x_count = int(math.ceil((x_max - x_min) / self.route_resolution))
+        y_count = int(math.ceil((y_max - y_min) / self.route_resolution))
         nodes = {}
-        for ix in range(count + 1):
-            x = min(
-                self.cx + self.radius,
-                x_min + ix * self.route_resolution,
-            )
-            for iy in range(count + 1):
-                y = min(
-                    self.cy + self.radius,
-                    y_min + iy * self.route_resolution,
-                )
+        for ix in range(x_count + 1):
+            x = min(x_max, x_min + ix * self.route_resolution)
+            for iy in range(y_count + 1):
+                y = min(y_max, y_min + iy * self.route_resolution)
                 if self._is_free_with_clearance(
-                    x, y, forest, self.segment_clearance
+                    x, y, forest, required_clearance
                 ):
-                    nodes[(ix, iy)] = (x, y, self.altitude)
+                    nodes[(ix, iy)] = (x, y, route_altitude)
         return nodes
 
-    def _nearest_visible_node(self, point, nodes, forest):
+    def _nearest_visible_node(
+        self, point, nodes, forest, clearance=None
+    ):
         candidates = sorted(
             nodes.items(),
             key=lambda item: (
@@ -204,13 +316,21 @@ class CoverageSearchServer:
             ) ** 2 + (item[1][1] - point[1]) ** 2,
         )
         for key, candidate in candidates:
-            if self._segment_is_free(point, candidate, forest):
+            if self._segment_is_free(
+                point, candidate, forest, clearance
+            ):
                 return key
         return None
 
-    def _astar_route(self, start, goal, forest, nodes):
-        start_key = self._nearest_visible_node(start, nodes, forest)
-        goal_key = self._nearest_visible_node(goal, nodes, forest)
+    def _astar_route(
+        self, start, goal, forest, nodes, clearance=None
+    ):
+        start_key = self._nearest_visible_node(
+            start, nodes, forest, clearance
+        )
+        goal_key = self._nearest_visible_node(
+            goal, nodes, forest, clearance
+        )
         if start_key is None or goal_key is None:
             return None
 
@@ -238,7 +358,7 @@ class CoverageSearchServer:
                     continue
                 neighbor_point = nodes[neighbor]
                 if not self._segment_is_free(
-                    current_point, neighbor_point, forest
+                    current_point, neighbor_point, forest, clearance
                 ):
                     continue
                 step_cost = math.hypot(
@@ -268,9 +388,84 @@ class CoverageSearchServer:
             current = parent[current]
         grid_path.reverse()
         route = [start] + grid_path + [goal]
-        return self._shortcut_route(route, forest)
+        return self._shortcut_route(route, forest, clearance)
 
-    def _shortcut_route(self, route, forest):
+    @staticmethod
+    def _append_unique(points, point):
+        if not points:
+            points.append(point)
+            return
+        previous = points[-1]
+        distance = math.sqrt(
+            (previous[0] - point[0]) ** 2
+            + (previous[1] - point[1]) ** 2
+            + (previous[2] - point[2]) ** 2
+        )
+        if distance > 1e-6:
+            points.append(point)
+
+    def _plan_safe_route(self, start, goal, forest, clearance):
+        route_altitude = max(start[2], goal[2])
+        horizontal_start = (start[0], start[1], route_altitude)
+        horizontal_goal = (goal[0], goal[1], route_altitude)
+
+        if self._segment_is_free(
+            horizontal_start,
+            horizontal_goal,
+            forest,
+            clearance,
+        ):
+            horizontal_route = [horizontal_start, horizontal_goal]
+        else:
+            nodes = self._route_grid(
+                forest,
+                horizontal_start,
+                horizontal_goal,
+                route_altitude,
+                clearance,
+            )
+            horizontal_route = self._astar_route(
+                horizontal_start,
+                horizontal_goal,
+                forest,
+                nodes,
+                clearance,
+            )
+            if horizontal_route is None:
+                return None
+
+        route = []
+        if abs(start[2] - route_altitude) > 1e-6:
+            self._append_unique(route, horizontal_start)
+        for point in horizontal_route[1:]:
+            self._append_unique(route, point)
+        self._append_unique(route, goal)
+        return route
+
+    def _plan_mission_route(self, start, goal, forest):
+        route = self._plan_safe_route(
+            start, goal, forest, self.mission_route_clearance
+        )
+        used_clearance = self.mission_route_clearance
+        if (
+            route is None
+            and self.mission_route_fallback_clearance
+            < self.mission_route_clearance
+        ):
+            used_clearance = self.mission_route_fallback_clearance
+            route = self._plan_safe_route(
+                start, goal, forest, used_clearance
+            )
+            if route is not None:
+                rospy.logwarn(
+                    "[competition] Mission route required fallback "
+                    "clearance %.2fm instead of %.2fm",
+                    used_clearance,
+                    self.mission_route_clearance,
+                )
+        return route, used_clearance
+
+    def _shortcut_route(self, route, forest, clearance=None):
         if len(route) < 3:
             return route
         shortened = [route[0]]
@@ -279,7 +474,10 @@ class CoverageSearchServer:
             next_index = len(route) - 1
             while next_index > index + 1:
                 if self._segment_is_free(
-                    route[index], route[next_index], forest
+                    route[index],
+                    route[next_index],
+                    forest,
+                    clearance,
                 ):
                     break
                 next_index -= 1
@@ -365,6 +563,30 @@ class CoverageSearchServer:
             path.poses.append(pose)
         self.path_pub.publish(path)
 
+    def _prepend_safe_entry_route(self, current_position):
+        if not self.viewpoints:
+            return True
+        start = (
+            current_position.x,
+            current_position.y,
+            current_position.z,
+        )
+        goal = self.viewpoints[0]
+        route, _used_clearance = self._plan_mission_route(
+            start, goal, self.forest
+        )
+        if route is None:
+            return False
+        inserted = max(0, len(route) - 1)
+        self.viewpoints = route + self.viewpoints[1:]
+        if inserted:
+            rospy.loginfo(
+                "[competition] Search entry route inserted %d safe goals",
+                inserted,
+            )
+        self._publish_path()
+        return True
+
     def _reverse_paths(self):
         self.viewpoints.reverse()
         self.coverage_path.reverse()
@@ -403,10 +625,21 @@ class CoverageSearchServer:
                 response.status = NextSearchViewpointResponse.PENDING
                 response.detail = "forest_not_received"
                 return response
+            if not self.base_viewpoints:
+                response.status = NextSearchViewpointResponse.PENDING
+                response.detail = self.generation_error or "route_not_prepared"
+                return response
 
             if request.reset:
                 self.index = 0
+                self.viewpoints = list(self.base_viewpoints)
                 self._orient_paths(request.current_position)
+                if not self._prepend_safe_entry_route(
+                    request.current_position
+                ):
+                    response.status = NextSearchViewpointResponse.PENDING
+                    response.detail = "safe_search_entry_route_unavailable"
+                    return response
 
             if self.index >= len(self.viewpoints):
                 response.status = NextSearchViewpointResponse.EXHAUSTED
@@ -429,6 +662,67 @@ class CoverageSearchServer:
                 len(self.viewpoints),
             )
             return response
+
+    def _handle_route_request(self, request):
+        response = PlanSafeRouteResponse()
+        with self.lock:
+            if self.forest is None:
+                response.success = False
+                response.detail = "forest_not_received"
+                return response
+            forest = self.forest
+
+        start = (
+            request.start.x,
+            request.start.y,
+            request.start.z,
+        )
+        goal = (
+            request.goal.x,
+            request.goal.y,
+            request.goal.z,
+        )
+        route, used_clearance = self._plan_mission_route(
+            start, goal, forest
+        )
+        if route is None:
+            response.success = False
+            response.detail = (
+                "no_clearance_safe_route_from_"
+                "%.2f_%.2f_to_%.2f_%.2f"
+                % (start[0], start[1], goal[0], goal[1])
+            )
+            return response
+
+        stamp = rospy.Time.now()
+        for x, y, z in route:
+            waypoint = PoseStamped()
+            waypoint.header.stamp = stamp
+            waypoint.header.frame_id = self.frame_id
+            waypoint.pose.position.x = x
+            waypoint.pose.position.y = y
+            waypoint.pose.position.z = z
+            waypoint.pose.orientation.w = 1.0
+            response.waypoints.append(waypoint)
+        response.success = True
+        response.detail = "safe_route_with_%d_goals_at_%.2fm" % (
+            len(route),
+            used_clearance,
+        )
+        rospy.loginfo(
+            "[competition] Safe route planned from "
+            "(%.2f, %.2f, %.2f) to (%.2f, %.2f, %.2f): "
+            "%d goals at %.2fm clearance",
+            start[0],
+            start[1],
+            start[2],
+            goal[0],
+            goal[1],
+            goal[2],
+            len(route),
+            used_clearance,
+        )
+        return response
 
 
 if __name__ == "__main__":

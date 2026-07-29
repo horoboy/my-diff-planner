@@ -11,6 +11,10 @@
     <arg name="obstacles_inflation" default="0.1"/>
     <arg name="obstacle_clearance" default="0.1"/>
     <arg name="obstacle_clearance_soft" default="0.5"/>
+    <arg name="enable_virtual_wall" default="false"/>
+    <arg name="virtual_ceil" default="3.0"/>
+    <arg name="virtual_ground" default="-0.1"/>
+    <arg name="planner_respawn" default="false"/>
     <arg name="trajectory_command_topic"
          default="drone_$(arg drone_id)_planning/pos_cmd"/>
     <arg name="simulator_command_topic"
@@ -65,6 +69,10 @@
         <arg name="obstacles_inflation" value="$(arg obstacles_inflation)" />
         <arg name="obstacle_clearance" value="$(arg obstacle_clearance)" />
         <arg name="obstacle_clearance_soft" value="$(arg obstacle_clearance_soft)" />
+        <arg name="enable_virtual_wall" value="$(arg enable_virtual_wall)" />
+        <arg name="virtual_ceil" value="$(arg virtual_ceil)" />
+        <arg name="virtual_ground" value="$(arg virtual_ground)" />
+        <arg name="planner_respawn" value="$(arg planner_respawn)" />
         <arg name="use_multitopology_trajs" value="false" />
         <!-- 1: use 2D Nav Goal to select goal  -->
         <!-- 2: use global waypoints below  -->

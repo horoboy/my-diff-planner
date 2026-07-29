@@ -1,0 +1,6 @@
+geometry_msgs/Point start
+geometry_msgs/Point goal
+---
+bool success
+geometry_msgs/PoseStamped[] waypoints
+string detail

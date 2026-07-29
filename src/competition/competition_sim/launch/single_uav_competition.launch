@@ -29,6 +29,10 @@
     <arg name="obstacle_clearance" value="$(arg obstacle_clearance)" />
     <arg name="obstacle_clearance_soft"
          value="$(arg obstacle_clearance_soft)" />
+    <arg name="enable_virtual_wall" value="true" />
+    <arg name="virtual_ceil" value="2.6" />
+    <arg name="virtual_ground" value="0.0" />
+    <arg name="planner_respawn" value="true" />
     <arg name="trajectory_command_topic"
          value="/competition/diff_position_cmd" />
     <arg name="simulator_command_topic"
@@ -37,6 +41,16 @@
     <arg name="sensing_horizon" value="3.0" />
     <arg name="planning_horizon" value="4.5" />
   </include>
+
+  <node pkg="competition_sim" type="planner_watchdog.py"
+        name="competition_planner_watchdog" output="screen">
+    <param name="planner_node" value="/drone_0_diff_planner_node" />
+    <param name="heartbeat_topic"
+           value="/drone_0_traj_server/heartbeat" />
+    <param name="heartbeat_timeout" value="0.8" />
+    <param name="recovery_cooldown" value="2.0" />
+    <param name="max_recoveries" value="3" />
+  </node>
 
   <node if="$(eval arg('search_backend') == 'coverage')"
         pkg="competition_sim" type="coverage_search_server.py"

@@ -24,6 +24,7 @@ catkin_install_python(
     scripts/coverage_search_server.py
     scripts/mission_evaluator.py
     scripts/payload_sim.py
+    scripts/planner_watchdog.py
     scripts/run_competition_batch.py
     scripts/run_single_uav_validation.sh
     scripts/target_detector_sim.py

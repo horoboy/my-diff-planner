@@ -34,6 +34,13 @@ export ROS_HOME="${ROS_HOME:-/tmp/competition_ros_home_${ROS_PORT}}"
 export ROS_LOG_DIR="${ROS_LOG_DIR:-/tmp/competition_ros_logs_${ROS_PORT}}"
 export FUEL_LD_LIBRARY_PATH="${FUEL_WORKSPACE_DIR}/devel/lib:/opt/ros/noetic/lib"
 
+if (exec 3<>"/dev/tcp/127.0.0.1/${ROS_PORT}") 2>/dev/null; then
+  exec 3>&-
+  exec 3<&-
+  echo "ERROR: TCP port ${ROS_PORT} is already in use" >&2
+  exit 2
+fi
+
 if timeout 1 rosnode list >/dev/null 2>&1; then
   echo "ERROR: a ROS master is already running at ${ROS_MASTER_URI}" >&2
   exit 2
@@ -106,6 +113,10 @@ for key in (
     "duration",
     "goal_sequence",
     "collision_count",
+    "min_altitude",
+    "max_altitude",
+    "altitude_violation_count",
+    "planner_recovery_count",
     "min_obstacle_clearance",
     "drop_error",
 ):
