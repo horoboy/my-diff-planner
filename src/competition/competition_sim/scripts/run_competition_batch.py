@@ -90,6 +90,7 @@ def extract_log_metrics(path):
         "route_detour_goals": 0,
         "transit_recoveries": 0,
         "motion_recoveries": 0,
+        "motion_route_replans": 0,
     }
     if not path.is_file():
         return metrics
@@ -128,6 +129,11 @@ def extract_log_metrics(path):
     metrics["motion_recoveries"] = len(
         re.findall(
             r"Motion recovery in \S+ \d+/\d+ goal republished", text
+        )
+    )
+    metrics["motion_route_replans"] = len(
+        re.findall(
+            r"Motion route replanned from actual position", text
         )
     )
     return metrics
@@ -232,6 +238,7 @@ def write_csv(path, cases):
         "route_detour_goals",
         "transit_recoveries",
         "motion_recoveries",
+        "motion_route_replans",
         "min_clearance_x",
         "min_clearance_y",
         "min_clearance_z",
@@ -307,6 +314,9 @@ def write_csv(path, cases):
                     ],
                     "motion_recoveries": case["metrics"][
                         "motion_recoveries"
+                    ],
+                    "motion_route_replans": case["metrics"][
+                        "motion_route_replans"
                     ],
                     "min_clearance_x": clearance_position[0],
                     "min_clearance_y": clearance_position[1],

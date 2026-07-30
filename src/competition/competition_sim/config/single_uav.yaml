@@ -15,6 +15,7 @@ search_tree_clearance: 0.60
 search_segment_clearance: 0.60
 mission_route_clearance: 0.65
 mission_route_fallback_clearance: 0.60
+mission_route_clearances: [0.65, 0.60, 0.56, 0.52]
 search_route_resolution: 0.20
 search_route_corridor_margin: 2.0
 search_timeout: 150.0
@@ -35,6 +36,7 @@ motion_max_retries: 3
 motion_waypoint_delay: 0.15
 motion_waypoint_tolerance: 0.15
 motion_waypoint_settle_time: 0.15
+motion_endpoint_replan_tolerance: 0.65
 
 target_position: [5.0, 3.8, 0.0]
 target_type: red

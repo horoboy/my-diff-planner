@@ -70,6 +70,21 @@ class CoverageSearchServer:
                 self.mission_route_clearance,
             )
         )
+        configured_route_clearances = rospy.get_param(
+            "/competition/mission_route_clearances", []
+        )
+        if configured_route_clearances:
+            self.mission_route_clearances = tuple(
+                float(value) for value in configured_route_clearances
+            )
+        else:
+            self.mission_route_clearances = (
+                self.mission_route_clearance,
+                self.mission_route_fallback_clearance,
+            )
+        self.mission_route_clearances = tuple(
+            dict.fromkeys(self.mission_route_clearances)
+        )
         self.route_resolution = float(
             rospy.get_param("/competition/search_route_resolution", 0.20)
         )
@@ -107,29 +122,26 @@ class CoverageSearchServer:
                 "required_obstacle_clearance %.3f"
                 % (self.segment_clearance, minimum_tree_clearance)
             )
-        if self.mission_route_clearance < minimum_tree_clearance:
-            raise ValueError(
-                "mission_route_clearance %.3f is below uav_radius + "
-                "required_obstacle_clearance %.3f"
-                % (self.mission_route_clearance, minimum_tree_clearance)
-            )
-        if self.mission_route_fallback_clearance < minimum_tree_clearance:
-            raise ValueError(
-                "mission_route_fallback_clearance %.3f is below "
-                "uav_radius + required_obstacle_clearance %.3f"
-                % (
-                    self.mission_route_fallback_clearance,
-                    minimum_tree_clearance,
+        if not self.mission_route_clearances:
+            raise ValueError("mission_route_clearances must not be empty")
+        for index, clearance in enumerate(self.mission_route_clearances):
+            if clearance < minimum_tree_clearance:
+                raise ValueError(
+                    "mission_route_clearances[%d] %.3f is below "
+                    "uav_radius + required_obstacle_clearance %.3f"
+                    % (index, clearance, minimum_tree_clearance)
                 )
-            )
-        if (
-            self.mission_route_fallback_clearance
-            > self.mission_route_clearance
-        ):
-            raise ValueError(
-                "mission_route_fallback_clearance must not exceed "
-                "mission_route_clearance"
-            )
+            if (
+                index > 0
+                and clearance >= self.mission_route_clearances[index - 1]
+            ):
+                raise ValueError(
+                    "mission_route_clearances must be strictly descending"
+                )
+        self.mission_route_clearance = self.mission_route_clearances[0]
+        self.mission_route_fallback_clearance = (
+            self.mission_route_clearances[-1]
+        )
         if self.route_resolution <= 0.0:
             raise ValueError("search_route_resolution must be positive")
         if self.route_corridor_margin <= 0.0:
@@ -443,26 +455,25 @@ class CoverageSearchServer:
         return route
 
     def _plan_mission_route(self, start, goal, forest):
-        route = self._plan_safe_route(
-            start, goal, forest, self.mission_route_clearance
-        )
-        used_clearance = self.mission_route_clearance
-        if (
-            route is None
-            and self.mission_route_fallback_clearance
-            < self.mission_route_clearance
-        ):
-            used_clearance = self.mission_route_fallback_clearance
+        route = None
+        used_clearance = self.mission_route_clearances[-1]
+        for clearance in self.mission_route_clearances:
+            used_clearance = clearance
             route = self._plan_safe_route(
-                start, goal, forest, used_clearance
+                start, goal, forest, clearance
             )
             if route is not None:
-                rospy.logwarn(
-                    "[competition] Mission route required fallback "
-                    "clearance %.2fm instead of %.2fm",
-                    used_clearance,
-                    self.mission_route_clearance,
-                )
+                break
+        if (
+            route is not None
+            and used_clearance < self.mission_route_clearance
+        ):
+            rospy.logwarn(
+                "[competition] Mission route required fallback "
+                "clearance %.2fm instead of %.2fm",
+                used_clearance,
+                self.mission_route_clearance,
+            )
         return route, used_clearance
 
     def _shortcut_route(self, route, forest, clearance=None):

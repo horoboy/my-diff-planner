@@ -141,6 +141,19 @@ class CompetitionMissionManager:
                 "/competition/motion_waypoint_settle_time", 0.15
             )
         )
+        self.motion_endpoint_replan_tolerance = float(
+            rospy.get_param(
+                "/competition/motion_endpoint_replan_tolerance", 0.65
+            )
+        )
+        if (
+            self.motion_endpoint_replan_tolerance
+            < self.motion_waypoint_tolerance
+        ):
+            raise ValueError(
+                "motion_endpoint_replan_tolerance must not be below "
+                "motion_waypoint_tolerance"
+            )
         self.auto_start = bool(rospy.get_param("~auto_start", False))
         self.auto_start_delay = float(rospy.get_param("~auto_start_delay", 3.0))
 
@@ -173,12 +186,15 @@ class CompetitionMissionManager:
         self.motion_route = []
         self.motion_route_index = 0
         self.motion_route_detail = ""
+        self.motion_destination = None
+        self.motion_route_replan_count = 0
         self.motion_retry_count = 0
         self.motion_best_distance = float("inf")
         self.motion_last_progress = None
         self.motion_retry_pending = None
         self.motion_next_pending = None
         self.last_route_request = rospy.Time(0)
+        self.last_route_error = ""
 
         odom_topic = rospy.get_param(
             "~odom_topic", "/drone_0_visual_slam/odom"
@@ -408,6 +424,9 @@ class CompetitionMissionManager:
         )
 
     def _schedule_motion_retry(self, now):
+        if self._replan_motion_route_from_actual_position(now):
+            return
+
         if self.motion_retry_count >= self.motion_max_retries:
             self._abort(
                 "%s_no_progress_after_%d_retries"
@@ -449,39 +468,127 @@ class CompetitionMissionManager:
         )
         return True
 
+    def _request_safe_route(self, goal):
+        route = [goal]
+        detail = "direct_route"
+        if self.search_backend != "coverage":
+            return route, detail
+
+        try:
+            request = PlanSafeRouteRequest()
+            position = self.odom.pose.pose.position
+            request.start = Point(
+                x=position.x, y=position.y, z=position.z
+            )
+            request.goal = Point(
+                x=goal.pose.position.x,
+                y=goal.pose.position.y,
+                z=goal.pose.position.z,
+            )
+            response = self.route_client(request)
+            detail = response.detail
+            if not response.success or not response.waypoints:
+                return None, detail
+            return list(response.waypoints), detail
+        except (rospy.ServiceException, rospy.ROSException) as error:
+            return None, str(error)
+
+    @staticmethod
+    def _route_definitively_unavailable(detail):
+        return detail.startswith("no_clearance_safe_route_")
+
+    def _preflight_route_ready(self, now):
+        if self.search_backend != "coverage":
+            return True
+        if (now - self.last_route_request).to_sec() < 0.5:
+            return False
+        self.last_route_request = now
+
+        goal = self._make_goal(
+            self.roi[0], self.roi[1], self.search_height
+        )
+        route, detail = self._request_safe_route(goal)
+        self.last_route_error = detail
+        if route is None:
+            if self._route_definitively_unavailable(detail):
+                self._abort("route_unavailable_before_takeoff:%s" % detail)
+            else:
+                self.detail = "preflight_route_waiting:%s" % detail
+            return False
+
+        self.detail = "preflight_route_ready:%s" % detail
+        rospy.loginfo(
+            "[competition] Preflight route check passed: %s", detail
+        )
+        return True
+
     def _start_motion_route(self, goal, detail, now):
         if (now - self.last_route_request).to_sec() < 0.5:
             return False
         self.last_route_request = now
 
-        route = [goal]
-        if self.search_backend == "coverage":
-            try:
-                request = PlanSafeRouteRequest()
-                position = self.odom.pose.pose.position
-                request.start = Point(
-                    x=position.x, y=position.y, z=position.z
-                )
-                request.goal = Point(
-                    x=goal.pose.position.x,
-                    y=goal.pose.position.y,
-                    z=goal.pose.position.z,
-                )
-                response = self.route_client(request)
-                if not response.success or not response.waypoints:
-                    self.detail = "safe_route_waiting:%s" % response.detail
-                    return False
-                route = list(response.waypoints)
-            except (rospy.ServiceException, rospy.ROSException) as error:
-                self.detail = "safe_route_waiting:%s" % error
-                return False
+        route, route_detail = self._request_safe_route(goal)
+        self.last_route_error = route_detail
+        if route is None:
+            self.detail = "safe_route_waiting:%s" % route_detail
+            return False
 
         self.motion_route = route
         self.motion_route_index = 0
         self.motion_route_detail = detail
+        self.motion_destination = goal
+        self.motion_route_replan_count = 0
         self.motion_retry_count = 0
         self.motion_next_pending = None
         self._publish_motion_route_goal(now)
+        return True
+
+    def _replan_motion_route_from_actual_position(self, now):
+        intermediate = (
+            self.motion_route
+            and self.motion_route_index + 1 < len(self.motion_route)
+        )
+        if (
+            not intermediate
+            or self.motion_destination is None
+            or self.active_goal is None
+            or self._distance(self.odom, self.active_goal)
+            > self.motion_endpoint_replan_tolerance
+            or self.motion_route_replan_count >= self.motion_max_retries
+            or (now - self.last_route_request).to_sec() < 0.5
+        ):
+            return False
+
+        previous_goal = self.active_goal.pose.position
+        previous_distance = self._distance(self.odom, self.active_goal)
+        self.last_route_request = now
+        route, route_detail = self._request_safe_route(
+            self.motion_destination
+        )
+        self.last_route_error = route_detail
+        if route is None:
+            self.detail = "motion_route_replan_waiting:%s" % route_detail
+            return False
+
+        self.motion_route = route
+        self.motion_route_index = 0
+        self.motion_route_replan_count += 1
+        self.motion_retry_count = 0
+        self.motion_retry_pending = None
+        self.motion_next_pending = None
+        self._publish_motion_route_goal(
+            now, "actual_position_replan_%d" % self.motion_route_replan_count
+        )
+        rospy.logwarn(
+            "[competition] Motion route replanned from actual position "
+            "after planner endpoint adjustment; requested=(%.3f, %.3f, "
+            "%.3f) distance=%.3f, route=%s",
+            previous_goal.x,
+            previous_goal.y,
+            previous_goal.z,
+            previous_distance,
+            route_detail,
+        )
         return True
 
     def _publish_motion_route_goal(self, now, suffix=None):
@@ -506,6 +613,8 @@ class CompetitionMissionManager:
             self.motion_route = []
             self.motion_route_index = 0
             self.motion_route_detail = ""
+            self.motion_destination = None
+            self.motion_route_replan_count = 0
             self.motion_retry_pending = None
             self.motion_next_pending = None
             return True
@@ -650,6 +759,8 @@ class CompetitionMissionManager:
         if self.state in (MissionStatus.COMPLETE, MissionStatus.ABORT):
             return
         self.motion_route = []
+        self.motion_destination = None
+        self.motion_route_replan_count = 0
         self.motion_retry_pending = None
         self.motion_next_pending = None
         self._set_state(MissionStatus.ABORT, reason)
@@ -680,6 +791,8 @@ class CompetitionMissionManager:
                     and (now - self.first_odom_time).to_sec() >= self.auto_start_delay
                 )
                 if self.start_requested or auto_ready:
+                    if not self._preflight_route_ready(now):
+                        return
                     self.mission_started = now
                     self._set_state(MissionStatus.TAKEOFF, "mission_started")
                     self._publish_goal(
@@ -690,8 +803,6 @@ class CompetitionMissionManager:
                     )
 
             elif self.state == MissionStatus.TAKEOFF:
-                if self._check_goal_timeout(now):
-                    return
                 if self._goal_arrived(
                     now, position_only_timeout=1.0
                 ):
@@ -702,10 +813,19 @@ class CompetitionMissionManager:
                         "transit_to_roi",
                         now,
                     ):
+                        if self._route_definitively_unavailable(
+                            self.last_route_error
+                        ):
+                            self._abort(
+                                "route_unavailable_after_takeoff:%s"
+                                % self.last_route_error
+                            )
                         return
                     self._set_state(
                         MissionStatus.TRANSIT_TO_ROI, "takeoff_complete"
                     )
+                elif self._check_goal_timeout(now):
+                    return
 
             elif self.state == MissionStatus.TRANSIT_TO_ROI:
                 if self._continue_motion_route(now):
@@ -785,6 +905,13 @@ class CompetitionMissionManager:
                         "target_overhead",
                         now,
                     ):
+                        if self._route_definitively_unavailable(
+                            self.last_route_error
+                        ):
+                            self._abort(
+                                "route_unavailable_to_target:%s"
+                                % self.last_route_error
+                            )
                         return
                     self._set_state(MissionStatus.APPROACH, "approaching_target")
 
@@ -837,6 +964,13 @@ class CompetitionMissionManager:
                             "return_home",
                             now,
                         ):
+                            if self._route_definitively_unavailable(
+                                self.last_route_error
+                            ):
+                                self._abort(
+                                    "route_unavailable_to_home:%s"
+                                    % self.last_route_error
+                                )
                             return
                         self._set_state(
                             MissionStatus.RETURN, "release_verified"
